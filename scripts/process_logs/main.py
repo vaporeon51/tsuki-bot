@@ -179,7 +179,7 @@ def main() -> None:
                 f", '{link.url}', '{link.initial_reaction_count}', '{str(link.is_broken).lower()}'"
                 ")"
             )
-            text += ";" if i == len(roles) - 1 else ","
+            text += ";" if i == len(content_links) - 1 else ","
             f.write(text + "\n")
 
 
