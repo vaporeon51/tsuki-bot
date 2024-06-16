@@ -1,0 +1,20 @@
+## Core
+python-dotenv
+pandas
+Levenshtein
+SQLAlchemy
+psycopg2
+
+# Jupyter
+ipykernel
+jupyter_black
+
+# Formatters / linters
+types-setuptools
+pandas-stubs
+black
+mypy
+isort
+
+# App
+discord.py
