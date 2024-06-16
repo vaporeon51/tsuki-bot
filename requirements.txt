@@ -3,7 +3,7 @@ python-dotenv
 pandas
 Levenshtein
 SQLAlchemy
-psycopg2
+psycopg[binary,pool]
 
 # Jupyter
 ipykernel
