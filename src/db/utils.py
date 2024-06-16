@@ -18,7 +18,7 @@ def find_closest_role(query: str) -> str | None:
                 WHERE string_tag ILIKE %s
                 LIMIT 1
             """,
-                (query,),
+                (f"%{query}%",),
             )
 
             # Fetch the first result
