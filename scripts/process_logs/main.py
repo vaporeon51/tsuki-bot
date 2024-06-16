@@ -171,7 +171,7 @@ def main() -> None:
 
     with open(CONTENT_SQL_FILE, "w") as f:
         f.write(
-            'INSERT INTO "role_info" ("role_id", "author_id", "author", "uploaded_date", "url", "initial_reaction_count", "is_broken") VALUES\n'
+            'INSERT INTO "content_links" ("role_id", "author_id", "author", "uploaded_date", "url", "initial_reaction_count", "is_broken") VALUES\n'
         )
         for i, link in enumerate(content_links):
             text = (
