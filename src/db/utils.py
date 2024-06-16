@@ -16,6 +16,7 @@ def find_closest_role(query: str) -> str | None:
                 SELECT role_id
                 FROM role_info
                 WHERE string_tag ILIKE %s
+                ORDER BY RANDOM()
                 LIMIT 1
             """,
                 (f"%{query}%",),
