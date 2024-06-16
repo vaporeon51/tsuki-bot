@@ -163,9 +163,9 @@ def main() -> None:
 
     # Write the role and content link tables out as SQL INSERT tuples
     with open(ROLE_SQL_FILE, "w") as f:
-        f.write('INSERT INTO "role_info" ("role_id", "role_tag", "member_name", "group_name") VALUES\n')
+        f.write('INSERT INTO "role_info" ("role_id", "string_tag", "member_name", "group_name") VALUES\n')
         for i, role in enumerate(roles):
-            text = f"\t('{role.role_id}', '{role.role_id}', '{role.member_name}', '{role.group_name}')"
+            text = f"\t('{role.role_id}', '{role.string_tag}', '{role.member_name}', '{role.group_name}')"
             text += ";" if i == len(roles) - 1 else ","
             f.write(text + "\n")
 
