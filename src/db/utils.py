@@ -22,7 +22,7 @@ def find_closest_role(query: str | None) -> str | None:
     """Given a query find the best role that match with the query."""
     with psycopg.connect(**CONN_DICT) as conn:
         with conn.cursor() as cur:
-            if not query:
+            if not query or query.lower() in ["r", "random"]:
                 cur.execute(
                     """
                     SELECT role_id
