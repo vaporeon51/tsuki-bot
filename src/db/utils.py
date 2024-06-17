@@ -20,6 +20,24 @@ RECENTLY_SENT_QUEUE = deque([""], maxlen=RECENTLY_SENT_QUEUE_SIZE)
 
 def find_closest_role(query: str) -> str | None:
     """Given a query find the best role that match with the query."""
+    print(f"""
+                WITH query AS (
+                    SELECT to_tsquery('english', regexp_replace(regexp_replace({query.strip()}, '(\w+)', '\1:*', 'g'), '\s+', ' & ', 'g')) AS search_terms
+                ),
+                ranked_roles AS (
+                    SELECT role_id,
+                        ts_rank_cd(tsv_string_tag, query.search_terms) AS r,
+                        rank() OVER (ORDER BY ts_rank_cd(tsv_string_tag, query.search_terms) DESC) AS rank
+                    FROM role_info, query
+                    WHERE
+                        tsv_string_tag @@ query.search_terms
+                )
+                SELECT role_id, rank
+                FROM ranked_roles, query
+                WHERE rank = 1
+                ORDER BY random()
+                LIMIT 1;
+            """)
     with psycopg.connect(**CONN_DICT) as conn:
         with conn.cursor() as cur:
             cur.execute(
