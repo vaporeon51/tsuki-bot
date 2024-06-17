@@ -14,7 +14,7 @@ def find_closest_role(query: str) -> str | None:
             cur.execute(
                 """
                 WITH query AS (
-                    SELECT to_tsquery('english', 'ive | yujin') AS search_terms 
+                    SELECT to_tsquery('english', %s) AS search_terms 
                 )
                 SELECT role_id,
                     ts_rank_cd(tsv_member_name, query.search_terms) +
