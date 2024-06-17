@@ -13,15 +13,17 @@ def find_closest_role(query: str) -> str | None:
         with conn.cursor() as cur:
             cur.execute(
                 """
-                WITH to_tsquery('english, %s) AS search_terms
+                WITH query AS (
+                    SELECT to_tsquery('english', 'ive | yujin') AS search_terms 
+                )
                 SELECT role_id,
-                    ts_rank_cd(tsv_member_name, search_terms)) +
-                    ts_rank_cd(tsv_group_name, search_terms) AS rank
+                    ts_rank_cd(tsv_member_name, query.search_terms) +
+                    ts_rank_cd(tsv_group_name, query.search_terms) AS rank
                 FROM role_info
                 WHERE
-                    (tsv_member_name @@ search_terms)
+                    (tsv_member_name @@ query.search_terms)
                     AND
-                    (tsv_group_name) @@ search_terms)
+                    (tsv_group_name @@ query.search_terms)
                 ORDER BY rank DESC
                 LIMIT 1
             """,
