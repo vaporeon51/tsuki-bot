@@ -12,7 +12,7 @@ load_dotenv(WEB_APP_PATH.joinpath(".env").as_posix())
 
 
 # Local imports after dotenv to ensure environment variables are available
-from src.config.constants import DOWNVOTE_EMOTE, REPORT_EMOTE, UPVOTE_EMOTE, REACT_WAIT_SEC
+from src.config.constants import DOWNVOTE_EMOTE, REACT_WAIT_SEC, REPORT_EMOTE, UPVOTE_EMOTE
 from src.db.utils import find_closest_role, get_random_link_for_role, update_given_emote_counts
 
 TOKEN = os.environ.get("TOKEN")

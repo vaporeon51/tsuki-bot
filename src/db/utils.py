@@ -2,7 +2,7 @@ import os
 
 import psycopg
 
-from src.config.constants import DOWNVOTE_EMOTE, REPORT_EMOTE, UPVOTE_EMOTE, REPORT_THRESHOLD
+from src.config.constants import DOWNVOTE_EMOTE, REPORT_EMOTE, REPORT_THRESHOLD, UPVOTE_EMOTE
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
 CONN_DICT = psycopg.conninfo.conninfo_to_dict(DATABASE_URL)
