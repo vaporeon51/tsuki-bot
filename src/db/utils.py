@@ -28,14 +28,14 @@ def find_closest_role(query: str) -> str | None:
                     SELECT to_tsquery('english', regexp_replace(regexp_replace('{query.strip()}', '(\w+)', '\1:*', 'g'), '\s+', ' & ', 'g')) AS search_terms
                 ),
                 ranked_roles AS (
-                    SELECT role_id, member_name, group_name, tsv_whole_text,
-                        ts_rank_cd(tsv_whole_text, query.search_terms) AS r,
-                        rank() OVER (ORDER BY ts_rank_cd(tsv_whole_text, query.search_terms) DESC) AS rank
+                    SELECT role_id,
+                        ts_rank_cd(tsv_string_tag, query.search_terms) AS r,
+                        rank() OVER (ORDER BY ts_rank_cd(tsv_string_tag, query.search_terms) DESC) AS rank
                     FROM role_info, query
                     WHERE
-                        tsv_whole_text @@ query.search_terms
+                        tsv_string_tag @@ query.search_terms
                 )
-                SELECT role_id, member_name, group_name, rank, r, query.search_terms, tsv_whole_text
+                SELECT role_id, rank
                 FROM ranked_roles, query
                 WHERE rank = 1
                 ORDER BY random()
