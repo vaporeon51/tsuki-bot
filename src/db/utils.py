@@ -1,10 +1,12 @@
 import os
+from collections import deque
 
 import psycopg
 
 from src.config.constants import (
     DOWNVOTE_EMOTE,
     INITIAL_REACT_CAP,
+    RECENTLY_SENT_QUEUE_SIZE,
     REPORT_EMOTE,
     REPORT_THRESHOLD,
     SAMPLING_EXPONENT,
@@ -13,6 +15,7 @@ from src.config.constants import (
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
 CONN_DICT = psycopg.conninfo.conninfo_to_dict(DATABASE_URL)
+RECENTLY_SENT_QUEUE = deque([""], maxlen=RECENTLY_SENT_QUEUE_SIZE)
 
 
 def find_closest_role(query: str) -> str | None:
@@ -41,27 +44,29 @@ def find_closest_role(query: str) -> str | None:
 
 def get_random_link_for_role(role_id: str) -> str | None:
     """Get a random content link given a role id."""
+    recently_sent_queue_str = "(" + ",".join([f"'{item}'" for item in RECENTLY_SENT_QUEUE]) + ")"
     with psycopg.connect(**CONN_DICT) as conn:
         with conn.cursor() as cur:
             cur.execute(
-                """
+                f"""
                 SELECT url
                 FROM content_links
-                WHERE role_id = %s
-                AND num_reports < %s
+                WHERE role_id = '{role_id}'
+                AND num_reports < {REPORT_THRESHOLD}
+                AND url NOT IN {recently_sent_queue_str}
                 ORDER BY RANDOM() * POWER(
-                    GREATEST(CAST(LEAST(initial_reaction_count, %s) + num_upvotes + num_downvotes AS FLOAT), 1.0),
-                    %s
+                    GREATEST(CAST(LEAST(initial_reaction_count, {INITIAL_REACT_CAP}) + num_upvotes + num_downvotes AS FLOAT), 1.0),
+                    {SAMPLING_EXPONENT}
                 ) DESC
                 LIMIT 1
-                """,
-                (role_id, REPORT_THRESHOLD, INITIAL_REACT_CAP, SAMPLING_EXPONENT),
+                """
             )
 
             # Fetch the first result
             result = cur.fetchone()
 
             if result:
+                RECENTLY_SENT_QUEUE.append(result[0])
                 return result[0]
             else:
                 return None
