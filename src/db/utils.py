@@ -33,7 +33,7 @@ def find_closest_role(query: str) -> str | None:
                 SELECT role_id, member_name, group_name, rank, r
                 FROM ranked_roles
                 WHERE rank = 1
-                ORDER BY random(); 
+                ORDER BY random();
             """,
                 (query),
             )
