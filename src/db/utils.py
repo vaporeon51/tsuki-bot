@@ -11,31 +11,24 @@ def find_closest_role(query: str) -> str | None:
     with psycopg.connect(**CONN_DICT) as conn:
         with conn.cursor() as cur:
             cur.execute(
-                """
+                f"""
                 WITH query AS (
-                    SELECT to_tsquery('english',
-                            regexp_replace(
-                                regexp_replace(%s, '\s+', ' | ', 'g'),
-                                '[^a-zA-Z0-9|\s]+', '', 'g')) AS search_terms
+                    SELECT to_tsquery('english', regexp_replace(regexp_replace('{query.strip()}', '(\w+)', '\1:*', 'g'), '\s+', ' & ', 'g')) AS search_terms
                 ),
                 ranked_roles AS (
-                    SELECT role_id, member_name, group_name,
-                        ts_rank_cd(tsv_member_name, query.search_terms) +
-                        ts_rank_cd(tsv_group_name, query.search_terms) AS r,
-                        rank() OVER (ORDER BY ts_rank_cd(tsv_member_name, query.search_terms) +
-                        ts_rank_cd(tsv_group_name, query.search_terms) DESC) AS rank
+                    SELECT role_id, member_name, group_name, tsv_whole_text,
+                        ts_rank_cd(tsv_whole_text, query.search_terms) AS r,
+                        rank() OVER (ORDER BY ts_rank_cd(tsv_whole_text, query.search_terms) DESC) AS rank
                     FROM role_info, query
                     WHERE
-                        tsv_member_name @@ query.search_terms
-                        OR
-                        tsv_group_name @@ query.search_terms
+                        tsv_whole_text @@ query.search_terms
                 )
-                SELECT role_id, member_name, group_name, rank, r
-                FROM ranked_roles
+                SELECT role_id, member_name, group_name, rank, r, query.search_terms, tsv_whole_text
+                FROM ranked_roles, query
                 WHERE rank = 1
-                ORDER BY random();
-            """,
-                (query),
+                ORDER BY random()
+                LIMIT 1;
+            """
             )
 
             # Fetch the first result
