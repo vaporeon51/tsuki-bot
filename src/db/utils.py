@@ -2,7 +2,7 @@ import os
 
 import psycopg
 
-from src.config.constants import DOWNVOTE_EMOTE, REPORT_EMOTE, REPORT_THRESHOLD, UPVOTE_EMOTE
+from src.config.constants import DOWNVOTE_EMOTE, REPORT_EMOTE, REPORT_THRESHOLD, UPVOTE_EMOTE, SAMPLING_EXPONENT
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
 CONN_DICT = psycopg.conninfo.conninfo_to_dict(DATABASE_URL)
@@ -42,10 +42,10 @@ def get_random_link_for_role(role_id: str) -> str | None:
                 FROM content_links
                 WHERE role_id = %s
                 AND num_reports < %s
-                ORDER BY RANDOM()
+                ORDER BY RANDOM() * POWER(GREATEST(CAST(initial_reaction_count + num_upvotes + num_downvotes AS FLOAT), 1.0), %s) DESC
                 LIMIT 1
                 """,
-                (role_id, REPORT_THRESHOLD),
+                (role_id, REPORT_THRESHOLD, SAMPLING_EXPONENT),
             )
 
             # Fetch the first result
