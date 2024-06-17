@@ -1,7 +1,6 @@
-import psycopg
 import os
-import random
 
+import psycopg
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
 CONN_DICT = psycopg.conninfo.conninfo_to_dict(DATABASE_URL)
@@ -9,17 +8,24 @@ CONN_DICT = psycopg.conninfo.conninfo_to_dict(DATABASE_URL)
 
 def find_closest_role(query: str) -> str | None:
     """Given a query find the best role that match with the query."""
+    search_term = query.replace(" ", " | ")
     with psycopg.connect(**CONN_DICT) as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT role_id
+                WITH to_tsquery('english, %s) AS search_terms
+                SELECT role_id,
+                    ts_rank_cd(tsv_member_name, search_terms)) +
+                    ts_rank_cd(tsv_group_name, search_terms) AS rank
                 FROM role_info
-                WHERE string_tag ILIKE %s
-                ORDER BY RANDOM()
+                WHERE
+                    (tsv_member_name @@ search_terms)
+                    AND
+                    (tsv_group_name) @@ search_terms)
+                ORDER BY rank DESC
                 LIMIT 1
             """,
-                (f"%{query}%",),
+                (search_term),
             )
 
             # Fetch the first result

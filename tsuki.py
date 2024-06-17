@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+
 import discord
 from discord.ext import commands
 from dotenv import load_dotenv
@@ -10,7 +11,7 @@ load_dotenv(WEB_APP_PATH.joinpath(".env").as_posix())
 
 
 # Local imports after dotenv to ensure environment variables are available
-from src.db.utils import get_random_link_for_role, find_closest_role
+from src.db.utils import find_closest_role, get_random_link_for_role
 
 TOKEN = os.environ.get("TOKEN")
 
@@ -26,7 +27,7 @@ async def on_ready():
     try:
         print(f"Signed in as { bot.user }")
         await bot.tree.sync()
-        print(f"Successfully synced commands.")
+        print("Successfully synced commands.")
     except Exception as e:
         print(e)
 
@@ -42,7 +43,7 @@ async def feed(interaction: discord.Interaction, query: str):
 
     url = get_random_link_for_role(role_id)
     if not url:
-        print(f"Could not find URL for '{role_id}'")
+        text = f"Could not find URL for '{role_id}'"
         print(text)
         await interaction.response.send_message(text)
         return
