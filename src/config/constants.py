@@ -10,3 +10,6 @@ REPORT_THRESHOLD = 5
 
 # 10x net upvotes translates to 2x the probability so log(2)/log(10) = 0.30
 SAMPLING_EXPONENT = 0.30102999566
+
+# Cap on the contribution of initial reactions from kpf to weight
+INITIAL_REACT_CAP = 200
