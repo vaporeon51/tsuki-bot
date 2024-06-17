@@ -35,7 +35,7 @@ async def on_ready():
 
 
 @bot.tree.command(name="feed", description="Get kpop content. Leave query empty for random idol.")
-async def feed(interaction: discord.Interaction, query: str | None = None):
+async def feed(interaction: discord.Interaction, query: str):
     role_id = find_closest_role(query)
     if not role_id:
         text = f"Could not find a role for '{query}'"

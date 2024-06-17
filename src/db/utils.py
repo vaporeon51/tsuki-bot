@@ -18,11 +18,11 @@ CONN_DICT = psycopg.conninfo.conninfo_to_dict(DATABASE_URL)
 RECENTLY_SENT_QUEUE = deque([""], maxlen=RECENTLY_SENT_QUEUE_SIZE)
 
 
-def find_closest_role(query: str | None) -> str | None:
+def find_closest_role(query: str) -> str | None:
     """Given a query find the best role that match with the query."""
     with psycopg.connect(**CONN_DICT) as conn:
         with conn.cursor() as cur:
-            if not query:
+            if query.lower() in ["r", "random"]:
                 cur.execute(
                     """
                     SELECT role_id
