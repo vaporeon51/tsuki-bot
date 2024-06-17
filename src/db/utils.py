@@ -23,7 +23,7 @@ def find_closest_role(query: str) -> str | None:
     print(
         f"""
         WITH query AS (
-            SELECT to_tsquery('english', regexp_replace(regexp_replace({query.strip()}, '(\w+)', '\1:*', 'g'), '\s+', ' & ', 'g')) AS search_terms
+            SELECT to_tsquery('english', regexp_replace(regexp_replace('{query.strip()}', '(\w+)', '\1:*', 'g'), '\s+', ' & ', 'g')) AS search_terms
         ),
         ranked_roles AS (
             SELECT role_id,
@@ -44,7 +44,7 @@ def find_closest_role(query: str) -> str | None:
             cur.execute(
                 f"""
                 WITH query AS (
-                    SELECT to_tsquery('english', regexp_replace(regexp_replace({query.strip()}, '(\w+)', '\1:*', 'g'), '\s+', ' & ', 'g')) AS search_terms
+                    SELECT to_tsquery('english', regexp_replace(regexp_replace('{query.strip()}', '(\w+)', '\1:*', 'g'), '\s+', ' & ', 'g')) AS search_terms
                 ),
                 ranked_roles AS (
                     SELECT role_id,
