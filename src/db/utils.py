@@ -27,7 +27,6 @@ def find_closest_role(query: str) -> str | None:
         ),
         ranked_roles AS (
             SELECT role_id,
-                ts_rank_cd(tsv_string_tag, query.search_terms) AS r,
                 rank() OVER (ORDER BY ts_rank_cd(tsv_string_tag, query.search_terms) DESC) AS rank
             FROM role_info, query
             WHERE
@@ -49,7 +48,6 @@ def find_closest_role(query: str) -> str | None:
                 ),
                 ranked_roles AS (
                     SELECT role_id,
-                        ts_rank_cd(tsv_string_tag, query.search_terms) AS r,
                         rank() OVER (ORDER BY ts_rank_cd(tsv_string_tag, query.search_terms) DESC) AS rank
                     FROM role_info, query
                     WHERE
