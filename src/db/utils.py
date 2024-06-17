@@ -18,29 +18,39 @@ CONN_DICT = psycopg.conninfo.conninfo_to_dict(DATABASE_URL)
 RECENTLY_SENT_QUEUE = deque([""], maxlen=RECENTLY_SENT_QUEUE_SIZE)
 
 
-def find_closest_role(query: str) -> str | None:
+def find_closest_role(query: str | None) -> str | None:
     """Given a query find the best role that match with the query."""
     with psycopg.connect(**CONN_DICT) as conn:
         with conn.cursor() as cur:
-            cur.execute(
-                f"""
-                WITH query AS (
-                    SELECT to_tsquery('english', regexp_replace(regexp_replace(regexp_replace('{query.strip()}', '[^a-zA-Z0-9\s]', '', 'g'), '(\w+)', '\\1:*', 'g'), '\s+', ' & ', 'g')) AS search_terms
-                ),
-                ranked_roles AS (
-                    SELECT role_id,
-                        rank() OVER (ORDER BY ts_rank_cd(tsv_string_tag, query.search_terms) DESC) AS rank
-                    FROM role_info, query
-                    WHERE
-                        tsv_string_tag @@ query.search_terms
+            if not query:
+                cur.execute(
+                    """
+                    SELECT role_id
+                    FROM role_info
+                    ORDER BY random()
+                    LIMIT 1;
+                    """
                 )
-                SELECT role_id, rank
-                FROM ranked_roles, query
-                WHERE rank = 1
-                ORDER BY random()
-                LIMIT 1;
-                """
-            )
+            else:
+                cur.execute(
+                    f"""
+                    WITH query AS (
+                        SELECT to_tsquery('english', regexp_replace(regexp_replace(regexp_replace('{query.strip()}', '[^a-zA-Z0-9\s]', '', 'g'), '(\w+)', '\\1:*', 'g'), '\s+', ' & ', 'g')) AS search_terms
+                    ),
+                    ranked_roles AS (
+                        SELECT role_id,
+                            rank() OVER (ORDER BY ts_rank_cd(tsv_string_tag, query.search_terms) DESC) AS rank
+                        FROM role_info, query
+                        WHERE
+                            tsv_string_tag @@ query.search_terms
+                    )
+                    SELECT role_id, rank
+                    FROM ranked_roles, query
+                    WHERE rank = 1
+                    ORDER BY random()
+                    LIMIT 1;
+                    """
+                )
 
             # Fetch the first result
             result = cur.fetchone()
