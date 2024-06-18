@@ -68,13 +68,19 @@ def get_random_link_for_role(role_id: str) -> str | None:
         with conn.cursor() as cur:
             cur.execute(
                 f"""
+                WITH bday_temp AS (
+                    SELECT birthday
+                    FROM role_info
+                    WHERE role_id = '{role_id}'
+                )
                 SELECT url
-                FROM content_links
+                FROM content_links, bday_temp
                 WHERE role_id = '{role_id}'
                 AND num_reports < {REPORT_THRESHOLD}
                 AND url NOT IN {recently_sent_queue_str}
+                AND uploaded_date > bday_temp.birthday + interval '18 year 7 day'
                 ORDER BY RANDOM() * POWER(
-                    GREATEST(CAST(LEAST(initial_reaction_count, {INITIAL_REACT_CAP}) + num_upvotes + num_downvotes AS FLOAT), 1.0),
+                    GREATEST(CAST(LEAST(initial_reaction_count, {INITIAL_REACT_CAP}) + num_upvotes - num_downvotes AS FLOAT), 1.0),
                     {SAMPLING_EXPONENT}
                 ) DESC
                 LIMIT 1
