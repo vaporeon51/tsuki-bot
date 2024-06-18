@@ -1,5 +1,5 @@
 import os
-from collections import deque
+from collections import defaultdict, deque
 from typing import List
 
 import psycopg
@@ -16,7 +16,7 @@ from src.config.constants import (
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
 CONN_DICT = psycopg.conninfo.conninfo_to_dict(DATABASE_URL)
-RECENTLY_SENT_QUEUE = deque([""], maxlen=RECENTLY_SENT_QUEUE_SIZE)
+RECENTLY_SENT_QUEUES = defaultdict(lambda: deque([""], maxlen=RECENTLY_SENT_QUEUE_SIZE))
 
 
 def find_closest_role(query: str | None, count: int = 1) -> List[str] | None:
@@ -103,6 +103,8 @@ def get_random_link_for_role(role_ids: List[str], count: int) -> List[str] | Non
                 RECENTLY_SENT_QUEUE.extend(result)
                 return result
             else:
+                # If there are none left for this role then reset the queue
+                RECENTLY_SENT_QUEUES[role_id] = deque([""], maxlen=RECENTLY_SENT_QUEUE_SIZE)
                 return None
 
 

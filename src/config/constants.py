@@ -15,4 +15,4 @@ SAMPLING_EXPONENT = 0.30102999566
 INITIAL_REACT_CAP = 200
 
 # Size of most recently sent URLs queue to prevent duplicates
-RECENTLY_SENT_QUEUE_SIZE = 20
+RECENTLY_SENT_QUEUE_SIZE = 10
