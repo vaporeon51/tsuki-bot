@@ -4,7 +4,6 @@ from collections import defaultdict, deque
 import psycopg
 
 from src.config.constants import (
-    DOWNVOTE_EMOTE,
     INITIAL_REACT_CAP,
     RECENTLY_SENT_QUEUE_SIZE,
     REPORT_EMOTE,
@@ -82,7 +81,7 @@ def get_random_link_for_role(role_id: str) -> str | None:
                 AND url NOT IN {recently_sent_queue_str}
                 AND uploaded_date > bday_temp.birthday + interval '18 year 1 month'
                 ORDER BY RANDOM() * POWER(
-                    GREATEST(CAST(LEAST(initial_reaction_count, {INITIAL_REACT_CAP}) + num_upvotes - num_downvotes AS FLOAT), 1.0),
+                    GREATEST(CAST(LEAST(initial_reaction_count / 3, {INITIAL_REACT_CAP}) + num_upvotes AS FLOAT), 1.0),
                     {SAMPLING_EXPONENT}
                 ) DESC
                 LIMIT 1
@@ -106,21 +105,19 @@ def update_given_emote_counts(role_id: str, url: str, count_by_emoji: dict[str, 
 
     # Subtract 1 from each one to remove bot's react
     upvote_count = count_by_emoji[UPVOTE_EMOTE] - 1
-    downvote_count = count_by_emoji[DOWNVOTE_EMOTE] - 1
     report_count = count_by_emoji[REPORT_EMOTE] - 1
 
-    if upvote_count + downvote_count + report_count > 0:
+    if upvote_count + report_count > 0:
         with psycopg.connect(**CONN_DICT) as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """
                     UPDATE content_links
                     SET num_upvotes = num_upvotes + %s,
-                        num_downvotes = num_downvotes + %s,
                         num_reports = num_reports + %s
                     WHERE url = %s
                     AND role_id = %s
                     """,
-                    (upvote_count, downvote_count, report_count, url, role_id),
+                    (upvote_count, report_count, url, role_id),
                 )
-        print(f"Updated feedback for {role_id} {url}: {(upvote_count, downvote_count, report_count)}")
+        print(f"Updated feedback for {role_id} {url}: {(upvote_count, report_count)}")
