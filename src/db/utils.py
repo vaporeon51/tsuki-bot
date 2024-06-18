@@ -43,6 +43,8 @@ def find_closest_role(query: str | None) -> str | None:
                         FROM role_info, query
                         WHERE
                             tsv_string_tag @@ query.search_terms
+                            AND
+                            NOW() > birthday + interval '18 year 1 month'
                     )
                     SELECT role_id, rank
                     FROM ranked_roles, query
