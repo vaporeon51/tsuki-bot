@@ -1,5 +1,6 @@
 import os
 from collections import deque
+from typing import List
 
 import psycopg
 
@@ -18,17 +19,22 @@ CONN_DICT = psycopg.conninfo.conninfo_to_dict(DATABASE_URL)
 RECENTLY_SENT_QUEUE = deque([""], maxlen=RECENTLY_SENT_QUEUE_SIZE)
 
 
-def find_closest_role(query: str | None) -> str | None:
-    """Given a query find the best role that match with the query."""
+def find_closest_role(query: str | None, count: int = 1) -> List[str] | None:
+    """
+    Given a query find the best role that matches with the query.
+
+    Optional Params:
+        int count - determine number of roles to get for random query.
+    """
     with psycopg.connect(**CONN_DICT) as conn:
         with conn.cursor() as cur:
             if not query or query.lower() in ["r", "random"]:
                 cur.execute(
-                    """
+                    f"""
                     SELECT role_id
                     FROM role_info
                     ORDER BY random()
-                    LIMIT 1;
+                    LIMIT {count};
                     """
                 )
             else:
@@ -53,15 +59,15 @@ def find_closest_role(query: str | None) -> str | None:
                 )
 
             # Fetch the first result
-            result = cur.fetchone()
+            result = [role[0] for role in cur.fetchall()]
 
             if result:
-                return result[0]
+                return result
             else:
                 return None
 
 
-def get_random_link_for_role(role_id: str) -> str | None:
+def get_random_link_for_role(role_ids: List[str]) -> List[str] | None:
     """Get a random content link given a role id."""
     recently_sent_queue_str = "(" + ",".join([f"'{item}'" for item in RECENTLY_SENT_QUEUE]) + ")"
     with psycopg.connect(**CONN_DICT) as conn:
@@ -70,23 +76,23 @@ def get_random_link_for_role(role_id: str) -> str | None:
                 f"""
                 SELECT url
                 FROM content_links
-                WHERE role_id = '{role_id}'
+                WHERE role_id IN '{tuple(role_ids)}'
                 AND num_reports < {REPORT_THRESHOLD}
                 AND url NOT IN {recently_sent_queue_str}
                 ORDER BY RANDOM() * POWER(
                     GREATEST(CAST(LEAST(initial_reaction_count, {INITIAL_REACT_CAP}) + num_upvotes + num_downvotes AS FLOAT), 1.0),
                     {SAMPLING_EXPONENT}
                 ) DESC
-                LIMIT 1
+                LIMIT {len(role_ids)}
                 """
             )
 
             # Fetch the first result
-            result = cur.fetchone()
+            result = [url[0] for url in cur.fetchall()]
 
             if result:
-                RECENTLY_SENT_QUEUE.append(result[0])
-                return result[0]
+                RECENTLY_SENT_QUEUE.extend(result)
+                return result
             else:
                 return None
 

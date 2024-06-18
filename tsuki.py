@@ -1,4 +1,5 @@
 import asyncio
+from collections import deque
 import os
 from pathlib import Path
 
@@ -14,6 +15,7 @@ load_dotenv(WEB_APP_PATH.joinpath(".env").as_posix())
 # Local imports after dotenv to ensure environment variables are available
 from src.config.constants import DOWNVOTE_EMOTE, REACT_WAIT_SEC, REPORT_EMOTE, UPVOTE_EMOTE
 from src.db.utils import find_closest_role, get_random_link_for_role, update_given_emote_counts
+from src.reaction.gather import gather_reactions
 
 TOKEN = os.environ.get("TOKEN")
 
@@ -38,14 +40,14 @@ async def on_ready():
     name="feed", description="Get kpop content using idol or group name. Use `r` or `random` for random idol."
 )
 async def feed(interaction: discord.Interaction, query: str | None = None):
-    role_id = find_closest_role(query)
+    role_id = find_closest_role([query])[0]
     if not role_id:
         text = f"Could not find a role for '{query}'"
         print(text)
         await interaction.response.send_message(text)
         return
 
-    url = get_random_link_for_role(role_id)
+    url = get_random_link_for_role([role_id])[0]
     if not url:
         text = f"Could not find a content link for '{role_id}'"
         print(text)
@@ -71,5 +73,36 @@ async def feed(interaction: discord.Interaction, query: str | None = None):
     count_by_emote = {emote.emoji: emote.count for emote in sent_message.reactions}
     update_given_emote_counts(role_id, url, count_by_emote)
 
+@bot.tree.command(name="autofeed", description= "Feast on kpop content, query empty for random, " +
+                  "interval for seconds between post, and count for number of posts.")
+async def autofeed(interaction: discord.Interaction, query: str | None = None, interval: int = 20, count: int = 5):
+
+    role_ids = find_closest_role(query=query, count=count)
+    if len(role_ids) < count and not (query and len(role_ids) == 1):
+        text = f"Could not find enough roles"
+        print(text)
+        await interaction.response.send_message(text)
+        return
+    urls = get_random_link_for_role(role_ids=role_ids)
+    if len(urls) < count:
+        text = f"Could not find {count} pieces of content"
+        print(text)
+        await interaction.response.send_message(text)
+        return
+
+    tasks = []
+    for url, role_id in zip(urls, role_ids):
+        sent_message = await interaction.followup.send(content=url, wait=True)
+
+        emotes = [UPVOTE_EMOTE, DOWNVOTE_EMOTE, REPORT_EMOTE]
+        for emote in emotes:
+            await sent_message.add_reaction(emote) 
+
+        reaction_gathering_task = asyncio.create_task(gather_reactions(sent_message, interaction.channel, url, role_id))
+        tasks.append(reaction_gathering_task)
+
+        await asyncio.sleep(interval)
+    
+    await asyncio.gather(*tasks)
 
 bot.run(TOKEN)
