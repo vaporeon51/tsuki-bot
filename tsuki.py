@@ -47,7 +47,7 @@ async def feed(interaction: discord.Interaction, query: str | None = None):
 
     url = get_random_link_for_role(role_id)
     if not url:
-        text = f"Could not find a content link for '{role_id}'"
+        text = f"Could not find a content link for role id '{role_id}' given query '{query}'"
         print(text)
         await interaction.response.send_message(text)
         return
