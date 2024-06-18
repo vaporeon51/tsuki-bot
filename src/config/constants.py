@@ -1,5 +1,4 @@
-UPVOTE_EMOTE = "🔼"
-DOWNVOTE_EMOTE = "🔽"
+UPVOTE_EMOTE = "❤️"
 REPORT_EMOTE = "⚠️"
 
 # Number of seconds to wait before updating db based on reactions
