@@ -40,16 +40,16 @@ async def on_ready():
 async def feed(interaction: discord.Interaction, query: str | None = None):
     role_id = find_closest_role(query)
     if not role_id:
-        text = f"Could not find a role for '{query}'"
+        text = f"Could not find a role for `{query}`. This message will disappear in 30s."
         print(text)
-        await interaction.response.send_message(text)
+        await interaction.response.send_message(text, delete_after=30)
         return
 
     url = get_random_link_for_role(role_id)
     if not url:
-        text = f"Could not find a content link for role id '{role_id}' given query '{query}'"
+        text = f"Could not find a content link for role id `{role_id}` given query `{query}`. This message will disappear in 30s."
         print(text)
-        await interaction.response.send_message(text)
+        await interaction.response.send_message(text, delete_after=30)
         return
 
     # Send the message and get the sent message
