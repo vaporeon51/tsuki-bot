@@ -1,5 +1,5 @@
 import asyncio
-from collections import deque
+from itertools import zip_longest
 import os
 from pathlib import Path
 
@@ -40,14 +40,16 @@ async def on_ready():
     name="feed", description="Get kpop content using idol or group name. Use `r` or `random` for random idol."
 )
 async def feed(interaction: discord.Interaction, query: str | None = None):
-    role_id = find_closest_role([query])[0]
+    role_id = find_closest_role(query)
     if not role_id:
         text = f"Could not find a role for '{query}'"
         print(text)
         await interaction.response.send_message(text)
         return
+    
+    print(role_id)
 
-    url = get_random_link_for_role([role_id])[0]
+    url = get_random_link_for_role(role_id)
     if not url:
         text = f"Could not find a content link for role id '{role_id}' given query '{query}'"
         print(text)
@@ -73,32 +75,35 @@ async def feed(interaction: discord.Interaction, query: str | None = None):
     count_by_emote = {emote.emoji: emote.count for emote in sent_message.reactions}
     update_given_emote_counts(role_id, url, count_by_emote)
 
-@bot.tree.command(name="autofeed", description= "Feast on kpop content, query empty for random, " +
-                  "interval for seconds between post, and count for number of posts.")
+@bot.tree.command(name="autofeed", description= "Feast on kpop content, interval for seconds between post, " +
+                  "and count for number of posts.")
 async def autofeed(interaction: discord.Interaction, query: str | None = None, interval: int = 20, count: int = 5):
 
+    # Gather roles if a 
     role_ids = find_closest_role(query=query, count=count)
-    if len(role_ids) < count and not (query and len(role_ids) == 1):
+    if len(role_ids) < count and not (query not in ["r", "random"] and len(role_ids) == 1):
         text = f"Could not find enough roles"
         print(text)
         await interaction.response.send_message(text)
         return
-    urls = get_random_link_for_role(role_ids=role_ids)
+    urls = get_random_link_for_role(role_ids=role_ids, count = count)
     if len(urls) < count:
         text = f"Could not find {count} pieces of content"
         print(text)
         await interaction.response.send_message(text)
         return
+    
+    await interaction.response.defer(thinking=True)
 
     tasks = []
-    for url, role_id in zip(urls, role_ids):
+    for url, role_id in zip_longest(urls, role_ids, fillvalue=role_ids[0]):
         sent_message = await interaction.followup.send(content=url, wait=True)
 
         emotes = [UPVOTE_EMOTE, DOWNVOTE_EMOTE, REPORT_EMOTE]
         for emote in emotes:
             await sent_message.add_reaction(emote) 
 
-        reaction_gathering_task = asyncio.create_task(gather_reactions(sent_message, interaction.channel, url, role_id))
+        reaction_gathering_task = asyncio.create_task(gather_reactions(sent_message, url, role_id))
         tasks.append(reaction_gathering_task)
 
         await asyncio.sleep(interval)

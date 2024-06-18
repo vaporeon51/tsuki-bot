@@ -69,9 +69,10 @@ def find_closest_role(query: str | None, count: int = 1) -> List[str] | None:
                 return None
 
 
-def get_random_link_for_role(role_ids: List[str]) -> List[str] | None:
+def get_random_link_for_role(role_ids: List[str], count: int) -> List[str] | None:
     """Get a random content link given a role id."""
     recently_sent_queue_str = "(" + ",".join([f"'{item}'" for item in RECENTLY_SENT_QUEUE]) + ")"
+    role_ids_str = ",".join(f"'{role}'" for role in role_ids)
     with psycopg.connect(**CONN_DICT) as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -79,11 +80,11 @@ def get_random_link_for_role(role_ids: List[str]) -> List[str] | None:
                 WITH bday_temp AS (
                     SELECT birthday
                     FROM role_info
-                    WHERE role_id = '{role_id}'
+                    WHERE role_id IN ({role_ids_str})
                 )
                 SELECT url
                 FROM content_links, bday_temp
-                WHERE role_id IN '{tuple(role_ids)}'
+                WHERE role_id IN ({role_ids_str})
                 AND num_reports < {REPORT_THRESHOLD}
                 AND url NOT IN {recently_sent_queue_str}
                 AND uploaded_date > bday_temp.birthday + interval '18 year 1 month'
@@ -91,7 +92,7 @@ def get_random_link_for_role(role_ids: List[str]) -> List[str] | None:
                     GREATEST(CAST(LEAST(initial_reaction_count, {INITIAL_REACT_CAP}) + num_upvotes - num_downvotes AS FLOAT), 1.0),
                     {SAMPLING_EXPONENT}
                 ) DESC
-                LIMIT {len(role_ids)}
+                LIMIT {count};
                 """
             )
 
