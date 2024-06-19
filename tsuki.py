@@ -44,7 +44,6 @@ async def feed(interaction: discord.Interaction, query: str | None = None):
         print(text)
         await interaction.response.send_message(text, delete_after=30)
         return
-
     url = get_random_link_for_role(role_id)
     if not url:
         text = f"Could not find a content link for role id `{role_id}` given query `{query}`. This message will disappear in 30s."

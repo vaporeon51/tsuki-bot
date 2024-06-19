@@ -32,25 +32,27 @@ def find_closest_role(query: str | None) -> str | None:
                 )
             else:
                 cur.execute(
-                    f"""
-                    WITH query AS (
-                        SELECT to_tsquery('english', regexp_replace(regexp_replace(regexp_replace('{query.strip()}', '[^a-zA-Z0-9\s]', '', 'g'), '(\w+)', '\\1:*', 'g'), '\s+', ' & ', 'g')) AS search_terms
-                    ),
-                    ranked_roles AS (
-                        SELECT role_id,
-                            rank() OVER (ORDER BY ts_rank_cd(tsv_string_tag, query.search_terms) DESC) AS rank
-                        FROM role_info, query
-                        WHERE
-                            tsv_string_tag @@ query.search_terms
-                            AND
-                            NOW() > birthday + interval '18 year 1 month'
-                    )
-                    SELECT role_id, rank
-                    FROM ranked_roles, query
-                    WHERE rank = 1
-                    ORDER BY random()
-                    LIMIT 1;
                     """
+                    WITH query AS (
+                        SELECT string_to_array(regexp_replace(LOWER(TRIM(%s)), '[^a-zA-Z0-9\s]', '', 'g'), ' ') AS terms
+                    ),
+                    matches AS (
+                        SELECT role_id,
+                            (
+                                SELECT COUNT(*)
+                                FROM  unnest(member_group_array) AS mga
+                                WHERE mga = ANY (query.terms)
+                            ) AS match_count
+                        FROM role_info, query
+                        WHERE NOW() > birthday + interval '18 year 1 month'
+                    )
+                    SELECT role_id, match_count
+                    FROM matches
+                    WHERE match_count > 0
+                    ORDER BY match_count DESC, RANDOM()
+                    LIMIT 1;
+                    """,
+                    (query,)
                 )
 
             # Fetch the first result
