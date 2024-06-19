@@ -35,15 +35,20 @@ def find_closest_role(query: str | None) -> str | None:
                     f"""
                     WITH query AS (
                         SELECT string_to_array(LOWER(TRIM('{query}')), ' ') AS terms
+                    ),
+                    matches AS (
+                        SELECT role_id,
+                            (
+                                SELECT COUNT(*)
+                                FROM  unnest(member_group_array) AS mga
+                                WHERE mga = ANY (query.terms)
+                            ) AS match_count
+                        FROM role_info, query
+                        WHERE NOW() > birthday + interval '18 year 1 month'
                     )
-                    SELECT role_id,
-                        (
-                            SELECT COUNT(*)
-                            FROM  unnest(member_group_array) AS mga
-                            WHERE mga = ANY (query.terms)
-                        ) AS match_count
-                    FROM role_info, query
-                    WHERE NOW() > birthday + interval '18 year 1 month'
+                    SELECT role_id, match_count
+                    FROM matches
+                    WHERE match_count > 0
                     ORDER BY match_count DESC, RANDOM()
                     LIMIT 1;
                     """
