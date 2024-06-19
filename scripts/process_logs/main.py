@@ -108,6 +108,10 @@ def extract_allowed_urls_and_roles(content: str, role_tags: list[str]) -> tuple[
     # Find all role IDs present in the content
     matching_roles = [role_tag for role_tag in role_tags if role_tag in content]
 
+    # If the role contains IU and others then remove IU as it's likely a false positive
+    if len(matching_roles) > 1 and "IU" in matching_roles:
+        matching_roles.remove("IU")
+
     # If no role IDs are found, return empty lists
     if not matching_roles:
         return [], []
