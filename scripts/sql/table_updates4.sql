@@ -1,18 +1,18 @@
-delete from content_links
-where role_id = '779823163465793546'
-and url in
+DELETE FROM content_links
+WHERE role_id = '779823163465793546'
+AND url IN
 (
-	select iu_urls.url 
-    from (
-		select url from content_links
-		where role_id = '779823163465793546'
-		group by 1
+	SELECT iu_urls.url 
+    FROM (
+		SELECT url FROM content_links
+		WHERE role_id = '779823163465793546'
+		GROUP BY url
 	) iu_urls
-	join (
-		select url, count(*) as counts
-		from content_links
-		group by url
-		having count(*) > 1
+	JOIN (
+		SELECT url, count(*) AS counts
+		FROM content_links
+		GROUP BY url
+		HAVING count(*) > 1
 	) multi_urls
-	on iu_urls.url = multi_urls.url
+	ON iu_urls.url = multi_urls.url
 );
