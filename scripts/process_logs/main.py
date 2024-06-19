@@ -106,7 +106,7 @@ def extract_allowed_urls_and_roles(content: str, role_tags: list[str]) -> tuple[
     """
 
     # Find all role IDs present in the content
-    matching_roles = [role_tag for role_tag in role_tags if role_tag in content]
+    matching_roles = [role_tag for role_tag in role_tags if f"@{role_tag}" in content]
 
     # If no role IDs are found, return empty lists
     if not matching_roles:
