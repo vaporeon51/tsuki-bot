@@ -34,7 +34,7 @@ def find_closest_role(query: str | None) -> str | None:
                 cur.execute(
                     f"""
                     WITH query AS (
-                        SELECT string_to_array(LOWER(TRIM('{query}')), ' ') AS terms
+                        SELECT string_to_array(regexp_replace(LOWER(TRIM('{query}')), '[^a-zA-Z0-9\s]', '', 'g'), ' ') AS terms
                     ),
                     matches AS (
                         SELECT role_id,
