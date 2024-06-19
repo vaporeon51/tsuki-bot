@@ -32,9 +32,9 @@ def find_closest_role(query: str | None) -> str | None:
                 )
             else:
                 cur.execute(
-                    f"""
+                    """
                     WITH query AS (
-                        SELECT string_to_array(regexp_replace(LOWER(TRIM('{query}')), '[^a-zA-Z0-9\s]', '', 'g'), ' ') AS terms
+                        SELECT string_to_array(regexp_replace(LOWER(TRIM(%s)), '[^a-zA-Z0-9\s]', '', 'g'), ' ') AS terms
                     ),
                     matches AS (
                         SELECT role_id,
@@ -51,7 +51,8 @@ def find_closest_role(query: str | None) -> str | None:
                     WHERE match_count > 0
                     ORDER BY match_count DESC, RANDOM()
                     LIMIT 1;
-                    """
+                    """,
+                    (query,)
                 )
 
             # Fetch the first result
