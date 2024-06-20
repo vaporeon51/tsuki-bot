@@ -35,7 +35,7 @@ async def on_ready():
 
     print(f"Currently in {len(bot.guilds)} servers:")
     for server in bot.guilds:
-        print("Server name:", server.name, ", owner:", server.owner.name)
+        print("Server name:", server.name, ", owner:", server.owner.name, "num of members:", server.member_count)
 
 
 @bot.tree.command(
