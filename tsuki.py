@@ -33,6 +33,10 @@ async def on_ready():
     except Exception as e:
         print(e)
 
+    print(f"Currently in {len(bot.guilds)} servers:")
+    for server in bot.guilds:
+        print(server.name, "owner:", server.owner.name)
+
 
 @bot.tree.command(
     name="feed", description="Get kpop content using idol or group name. Use `r` or `random` for random idol."
