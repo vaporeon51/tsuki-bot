@@ -13,7 +13,7 @@ load_dotenv(WEB_APP_PATH.joinpath(".env").as_posix())
 
 # Local imports after dotenv to ensure environment variables are available
 from src.config.constants import REACT_WAIT_SEC, REPORT_EMOTE, UPVOTE_EMOTE
-from src.db.utils import find_closest_role, get_random_link_for_role, update_given_emote_counts
+from src.db.utils import get_closest_role, get_random_roles, get_random_link_for_each_role, update_given_emote_counts
 
 TOKEN = os.environ.get("TOKEN")
 
@@ -38,22 +38,26 @@ async def on_ready():
     name="feed", description="Get kpop content using idol or group name. Use `r` or `random` for random idol."
 )
 async def feed(interaction: discord.Interaction, query: str | None = None):
-    role_id = find_closest_role(query)
+    if query in [None, "r", "random"]:
+        role_id = get_random_roles(1)
+    else:
+        role_id = get_closest_role(query)
+
     if not role_id:
-        text = f"Could not find a role for `{query}`. This message will disappear in 30s."
+        text = f"Could not find a role for `{query if query else 'random'}`. This message will disappear in 30s."
         print(text)
         await interaction.response.send_message(text, delete_after=30)
         return
-
-    url = get_random_link_for_role(role_id)
+    
+    url = get_random_link_for_each_role(role_id)
     if not url:
-        text = f"Could not find a content link for role id `{role_id}` given query `{query}`. This message will disappear in 30s."
+        text = f"Could not find a content link for role id `{role_id[0]}` given query `{query if query else 'random'}`. This message will disappear in 30s."
         print(text)
         await interaction.response.send_message(text, delete_after=30)
         return
 
     # Send the message and get the sent message
-    await interaction.response.send_message(url)
+    await interaction.response.send_message(url[0])
     sent_message = await interaction.original_response()
 
     # React to the sent message with feedback emotes

@@ -1,5 +1,5 @@
 import os
-from collections import defaultdict, deque, Counter
+from collections import defaultdict, deque
 from typing import List
 
 import psycopg
@@ -18,42 +18,42 @@ CONN_DICT = psycopg.conninfo.conninfo_to_dict(DATABASE_URL)
 RECENTLY_SENT_QUEUES = defaultdict(lambda: deque([""], maxlen=RECENTLY_SENT_QUEUE_SIZE))
 
 
-def find_closest_role(query: str) -> str | None:
+def get_closest_role(query: str) -> List[str] | None:
     """
     Given a query find the best role that matches with the query.
     """
     with psycopg.connect(**CONN_DICT) as conn:
         with conn.cursor() as cur:
             cur.execute(
-                    """
-                    WITH query AS (
-                        SELECT string_to_array(regexp_replace(LOWER(TRIM(%s)), '[^a-zA-Z0-9\s]', '', 'g'), ' ') AS terms
-                    ),
-                    matches AS (
-                        SELECT role_id,
-                            (
-                                SELECT COUNT(*)
-                                FROM  unnest(member_group_array) AS mga
-                                WHERE mga = ANY (query.terms)
-                            ) AS match_count
-                        FROM role_info, query
-                        WHERE NOW() > birthday + interval '18 year 1 month'
-                    )
-                    SELECT role_id, match_count
-                    FROM matches
-                    WHERE match_count > 0
-                    ORDER BY match_count DESC, RANDOM()
-                    LIMIT 1;
-                    """,
-                    (query,)
+                """
+                WITH query AS (
+                    SELECT string_to_array(regexp_replace(LOWER(TRIM(%s)), '[^a-zA-Z0-9\s]', '', 'g'), ' ') AS terms
+                ),
+                matches AS (
+                    SELECT role_id,
+                        (
+                            SELECT COUNT(*)
+                            FROM  unnest(member_group_array) AS mga
+                            WHERE mga = ANY (query.terms)
+                        ) AS match_count
+                    FROM role_info, query
+                    WHERE NOW() > birthday + interval '18 year 1 month'
                 )
+                SELECT role_id, match_count
+                FROM matches
+                WHERE match_count > 0
+                ORDER BY match_count DESC, RANDOM()
+                LIMIT 1;
+                """,
+                (query,)
+            )
 
             # Fetch the first result
             result = cur.fetchone()[0]
 
             if not result:
                 return None
-            return result
+            return [result]
 
 def get_random_link_for_each_role(role_ids: List[str]) -> List[str] | None:
     """Get a random content link given a role id."""
@@ -61,41 +61,36 @@ def get_random_link_for_each_role(role_ids: List[str]) -> List[str] | None:
     if role_ids is None or len(role_ids) == 0:
         return None
 
-    role_ids_str = ",".join(f"'{role}'" for role in role_ids)
-    recently_sent_queue_str = "(" + ",".join([f"'{item}'" for role in role_ids for item in RECENTLY_SENT_QUEUES[role]]) + ")"
+    recently_sent_queue = [item for role in role_ids for item in RECENTLY_SENT_QUEUES[role]]
 
     with psycopg.connect(**CONN_DICT) as conn:
         with conn.cursor() as cur:
             cur.execute(
                 f"""
-                WITH roles AS (
-                    SELECT strings_to_table(%s, ',') AS id 
-                ),
-                bday AS (
+                WITH bday AS (
                     SELECT role_id, birthday
                     FROM role_info
-                    WHERE role_id IN %s
+                    WHERE role_info.role_id = ANY(%s)
                 ),
                 numbered_urls AS (
-                    SELECT roles.id, cl.url,
-                    ROW_NUMBER() OVER (PARTITION BY roles.id ORDER BY
+                    SELECT bday.role_id, cl.url,
+                    ROW_NUMBER() OVER (PARTITION BY bday.role_id ORDER BY
                         RANDOM() * POWER(GREATEST(CAST(LEAST(initial_reaction_count / 3, %s) + num_upvotes AS FLOAT), 1.0), %s) DESC) 
                         AS row_num
-                    FROM roles
-                    JOIN content_links cl ON roles.id = cl.role_id
-                    JOIN bday ON cl.role_id = bday.role_id
+                    FROM bday
+                    JOIN content_links cl ON bday.role_id = cl.role_id
                     WHERE cl.num_reports < %s
-                    AND cl.url NOT IN %s
+                    AND cl.url != ALL(%s)
                     AND cl.uploaded_date > bday.birthday + INTERVAL '18 year 1 month'
                 )
 
-                SELECT id, url
+                SELECT role_id, url
                 FROM numbered_urls
                 WHERE row_num <= (
-                    SELECT COUNT(*) FROM roles WHERE id = numbered_urls.id
+                    SELECT COUNT(*) FROM (SELECT unnest(%s::TEXT[]) AS id) WHERE id = numbered_urls.role_id
                 );
                 """,
-                (role_ids_str, role_ids_str, INITIAL_REACT_CAP, SAMPLING_EXPONENT, REPORT_THRESHOLD, recently_sent_queue_str)
+                (role_ids, INITIAL_REACT_CAP, SAMPLING_EXPONENT, REPORT_THRESHOLD, recently_sent_queue, role_ids)
             )
 
             result = cur.fetchall()
@@ -118,7 +113,7 @@ def get_random_link_for_each_role(role_ids: List[str]) -> List[str] | None:
             ret = []
 
             for role, url in result:
-                RECENTLY_SENT_QUEUES(role).append(url)
+                RECENTLY_SENT_QUEUES[role].append(url)
                 ret.append(url)
             return ret
 
