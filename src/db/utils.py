@@ -45,15 +45,47 @@ def get_closest_role(query: str) -> List[str] | None:
                 ORDER BY match_count DESC, RANDOM()
                 LIMIT 1;
                 """,
-                (query,)
+                (query,),
             )
 
             # Fetch the first result
-            result = cur.fetchone()[0]
+            result = cur.fetchone()
 
             if not result:
                 return None
-            return [result]
+            return [result[0]]
+
+
+def get_random_roles(count: int) -> List[str] | None:
+    """Get count number of random role ids"""
+
+    # Determines if cross join is needed for this query
+    query_part = ""
+    params = (count,)
+    if count > 1:
+        query_part = ", generate_series(1, %s)"
+        params += (count,)
+
+    with psycopg.connect(**CONN_DICT) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT role_id
+                FROM role_info"""
+                + query_part
+                + """
+                WHERE NOW() > birthday + interval '18 year 1 month'
+                ORDER BY random(), role_id DESC
+                LIMIT %s
+                """,
+                params,
+            )
+            result = [role[0] for role in cur.fetchall()]
+
+            if not result or len(result) < count:
+                return None
+            return result
+
 
 def get_random_link_for_each_role(role_ids: List[str]) -> List[str] | None:
     """Get a random content link given a role id."""
@@ -66,7 +98,7 @@ def get_random_link_for_each_role(role_ids: List[str]) -> List[str] | None:
     with psycopg.connect(**CONN_DICT) as conn:
         with conn.cursor() as cur:
             cur.execute(
-                f"""
+                """
                 WITH bday AS (
                     SELECT role_id, birthday
                     FROM role_info
@@ -75,7 +107,7 @@ def get_random_link_for_each_role(role_ids: List[str]) -> List[str] | None:
                 numbered_urls AS (
                     SELECT bday.role_id, cl.url,
                     ROW_NUMBER() OVER (PARTITION BY bday.role_id ORDER BY
-                        RANDOM() * POWER(GREATEST(CAST(LEAST(initial_reaction_count / 3, %s) + num_upvotes AS FLOAT), 1.0), %s) DESC) 
+                        RANDOM() * POWER(GREATEST(CAST(LEAST(initial_reaction_count / 3, %s) + num_upvotes AS FLOAT), 1.0), %s) DESC)
                         AS row_num
                     FROM bday
                     JOIN content_links cl ON bday.role_id = cl.role_id
@@ -90,7 +122,7 @@ def get_random_link_for_each_role(role_ids: List[str]) -> List[str] | None:
                     SELECT COUNT(*) FROM (SELECT unnest(%s::TEXT[]) AS id) WHERE id = numbered_urls.role_id
                 );
                 """,
-                (role_ids, INITIAL_REACT_CAP, SAMPLING_EXPONENT, REPORT_THRESHOLD, recently_sent_queue, role_ids)
+                (role_ids, INITIAL_REACT_CAP, SAMPLING_EXPONENT, REPORT_THRESHOLD, recently_sent_queue, role_ids),
             )
 
             result = cur.fetchall()
@@ -109,7 +141,7 @@ def get_random_link_for_each_role(role_ids: List[str]) -> List[str] | None:
                 for id in missing_roles:
                     RECENTLY_SENT_QUEUES[id].clear()
                 return None
-            
+
             ret = []
 
             for role, url in result:
@@ -117,34 +149,6 @@ def get_random_link_for_each_role(role_ids: List[str]) -> List[str] | None:
                 ret.append(url)
             return ret
 
-
-def get_random_roles(count: int) -> List[str] | None:
-    """Get count number of random role ids"""
-
-    #Determines if cross join is needed for this query
-    query_part = ""
-    params = (count,)
-    if count > 1:
-        query_part = ", generate_series(1, %s)"
-        params += (count,)
-
-    with psycopg.connect(**CONN_DICT) as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT role_id
-                FROM role_info""" + query_part + """
-                WHERE NOW() > birthday + interval '18 year 1 month'
-                ORDER BY random(), role_id DESC
-                LIMIT %s
-                """,
-                params
-            )
-            result = [role[0] for role in cur.fetchall()]
-
-            if not result or len(result) < count:
-                return None
-            return result
 
 def update_given_emote_counts(role_id: str, url: str, count_by_emoji: dict[str, int]) -> None:
     """Update the database for role and URL given the feedback from users."""
