@@ -82,7 +82,6 @@ async def run_content_links_update() -> None:
         await asyncio.sleep(1.2)
         last_message_id = new_messages[-1]["id"]
         print(f"Processed up to {new_messages[-1]['timestamp']}. Total so far: {len(new_links)}.")
-        break
 
     # Bulk upsert the new content links and update log
     if new_links:
