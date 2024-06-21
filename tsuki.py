@@ -44,7 +44,7 @@ async def on_ready():
     for server in bot.guilds:
         print("Server name:", server.name, ", owner:", server.owner.name, "num of members:", server.member_count)
 
-    # update_content_loop.start()
+    update_content_loop.start()
 
 
 @bot.tree.command(
