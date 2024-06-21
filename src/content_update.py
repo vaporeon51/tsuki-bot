@@ -64,6 +64,7 @@ def process_message(message_json: dict, valid_roles: list[str], processed_date: 
 
 async def run_content_links_update() -> None:
     """Main entrypoint for running content update routine."""
+    # TODO: look into using discord py library instead of API directly
 
     print("Starting content update...")
     processed_date = datetime.now()
