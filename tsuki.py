@@ -86,17 +86,25 @@ async def feed(interaction: discord.Interaction, query: str | None = None):
                   "and count for number of posts.")
 @discord.app_commands.default_permissions(manage_guild=True)
 async def autofeed(interaction: discord.Interaction, query: str | None = None, interval: int = 20, count: int = 5):
-    role_ids = find_closest_role(query=query, count=count)
-    if len(role_ids) < count and not (query not in ["r", "random"] and len(role_ids) == 1):
+    if query in [None, "r", "random"]:
+        role_ids = get_random_roles(count)
+    else:
+        role_ids = get_closest_roles(query, count)
+        temp = len(role_ids)
+        temp = count // temp + 1
+        role_ids = role_ids * temp
+
+    if not role_ids or (len(role_ids) < count and not (query not in [None, "r", "random"] and len(role_ids) == 1)):
         text = f"Could not find enough roles"
         print(text)
-        await interaction.response.send_message(text)
+        await interaction.response.send_message(text, delete_after=30)
         return
-    urls = get_random_link_for_role(role_ids=role_ids, count = count)
-    if len(urls) < count:
+    
+    urls = get_random_link_for_each_role(role_ids=role_ids)
+    if not urls or len(urls) < count:
         text = f"Could not find {count} pieces of content"
         print(text)
-        await interaction.response.send_message(text)
+        await interaction.response.send_message(text, delete_after=30)
         return
     
     await interaction.response.defer(thinking=True)
@@ -105,7 +113,7 @@ async def autofeed(interaction: discord.Interaction, query: str | None = None, i
     for url, role_id in zip_longest(urls, role_ids, fillvalue=role_ids[0]):
         sent_message = await interaction.followup.send(content=url, wait=True)
 
-        emotes = [UPVOTE_EMOTE, DOWNVOTE_EMOTE, REPORT_EMOTE]
+        emotes = [UPVOTE_EMOTE, REPORT_EMOTE]
         for emote in emotes:
             await sent_message.add_reaction(emote) 
 
