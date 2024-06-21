@@ -13,7 +13,7 @@ load_dotenv(WEB_APP_PATH.joinpath(".env").as_posix())
 
 # Local imports after dotenv to ensure environment variables are available
 from src.config.constants import REACT_WAIT_SEC, REPORT_EMOTE, UPVOTE_EMOTE
-from src.db.utils import get_closest_role, get_random_link_for_each_role, get_random_roles, update_given_emote_counts
+from src.db.utils import get_closest_roles, get_random_link_for_each_role, get_random_roles, update_given_emote_counts
 
 TOKEN = os.environ.get("TOKEN")
 
@@ -43,25 +43,25 @@ async def on_ready():
 )
 async def feed(interaction: discord.Interaction, query: str | None = None):
     if query in [None, "r", "random"]:
-        role_id = get_random_roles(1)
+        role_ids = get_random_roles(1)
     else:
-        role_id = get_closest_role(query)
+        role_ids = get_closest_roles(query)
 
-    if not role_id:
+    if not role_ids:
         text = f"Could not find a role for `{query if query else 'random'}`. This message will disappear in 30s."
         print(text)
         await interaction.response.send_message(text, delete_after=30)
         return
 
-    url = get_random_link_for_each_role(role_id)
-    if not url:
-        text = f"Could not find a content link for role id `{role_id[0]}` given query `{query if query else 'random'}`. This message will disappear in 30s."
+    urls = get_random_link_for_each_role(role_ids)
+    if not urls:
+        text = f"Could not find a content link for role id `{role_ids[0]}` given query `{query if query else 'random'}`. This message will disappear in 30s."
         print(text)
         await interaction.response.send_message(text, delete_after=30)
         return
 
     # Send the message and get the sent message
-    await interaction.response.send_message(url[0])
+    await interaction.response.send_message(urls[0])
     sent_message = await interaction.original_response()
 
     # React to the sent message with feedback emotes
@@ -77,7 +77,7 @@ async def feed(interaction: discord.Interaction, query: str | None = None):
 
     # Update the table based on feedback
     count_by_emote = {emote.emoji: emote.count for emote in sent_message.reactions}
-    update_given_emote_counts(role_id[0], url[0], count_by_emote)
+    update_given_emote_counts(role_ids[0], urls[0], count_by_emote)
 
 
 bot.run(TOKEN)

@@ -1,6 +1,5 @@
 import os
 from collections import defaultdict, deque
-from typing import List
 
 import psycopg
 
@@ -15,10 +14,11 @@ from src.config.constants import (
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
 CONN_DICT = psycopg.conninfo.conninfo_to_dict(DATABASE_URL)
-RECENTLY_SENT_QUEUES = defaultdict(lambda: deque([""], maxlen=RECENTLY_SENT_QUEUE_SIZE))
+RECENTLY_SENT_QUEUES = defaultdict(lambda: deque(maxlen=RECENTLY_SENT_QUEUE_SIZE))
 
 
-def get_closest_role(query: str) -> List[str] | None:
+#TODO implement count logic returning all roles with max count (if count > 1)
+def get_closest_roles(query: str, count: int = 1) -> list[str] | None:
     """
     Given a query find the best role that matches with the query.
     """
@@ -56,7 +56,7 @@ def get_closest_role(query: str) -> List[str] | None:
             return [result[0]]
 
 
-def get_random_roles(count: int) -> List[str] | None:
+def get_random_roles(count: int) -> list[str] | None:
     """Get count number of random role ids"""
 
     # Determines if cross join is needed for this query
@@ -87,7 +87,7 @@ def get_random_roles(count: int) -> List[str] | None:
             return result
 
 
-def get_random_link_for_each_role(role_ids: List[str]) -> List[str] | None:
+def get_random_link_for_each_role(role_ids: list[str]) -> list[str] | None:
     """Get a random content link given a role id."""
 
     if role_ids is None or len(role_ids) == 0:
