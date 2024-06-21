@@ -3,7 +3,7 @@ import os
 from pathlib import Path
 
 import discord
-from discord.ext import commands
+from discord.ext import commands, tasks
 from dotenv import load_dotenv
 
 # Load environment variables from the root repository path
@@ -13,6 +13,7 @@ load_dotenv(WEB_APP_PATH.joinpath(".env").as_posix())
 
 # Local imports after dotenv to ensure environment variables are available
 from src.config.constants import REACT_WAIT_SEC, REPORT_EMOTE, UPVOTE_EMOTE
+from src.content_update import run_content_links_update
 from src.db.utils import get_closest_roles, get_random_link_for_each_role, get_random_roles, update_given_emote_counts
 
 TOKEN = os.environ.get("TOKEN")
@@ -22,6 +23,11 @@ intents.members = True
 intents.message_content = True
 
 bot = commands.Bot(intents=intents, command_prefix="['/tsuki', '/tk', '/feed', '!']", help_command=None)
+
+
+@tasks.loop(seconds=60 * 60 * 24)
+async def update_content_loop():
+    await run_content_links_update()
 
 
 @bot.event
@@ -36,6 +42,8 @@ async def on_ready():
     print(f"Currently in {len(bot.guilds)} servers:")
     for server in bot.guilds:
         print("Server name:", server.name, ", owner:", server.owner.name, "num of members:", server.member_count)
+
+    update_content_loop.start()
 
 
 @bot.tree.command(
