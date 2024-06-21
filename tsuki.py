@@ -39,6 +39,7 @@ async def on_ready():
 @bot.tree.command(
     name="feed", description="Get kpop content using idol or group name. Use `r` or `random` for random idol."
 )
+@discord.app_commands.default_permissions(manage_guild=True)
 async def feed(interaction: discord.Interaction, query: str | None = None):
     role_id = find_closest_role(query)
     if not role_id:
@@ -46,10 +47,8 @@ async def feed(interaction: discord.Interaction, query: str | None = None):
         print(text)
         await interaction.response.send_message(text)
         return
-    
-    print(role_id)
 
-    url = get_random_link_for_role(role_id)
+    url = get_random_link_for_role(role_id[0])[0]
     if not url:
         text = f"Could not find a content link for role id '{role_id}' given query '{query}'"
         print(text)
@@ -77,9 +76,8 @@ async def feed(interaction: discord.Interaction, query: str | None = None):
 
 @bot.tree.command(name="autofeed", description= "Feast on kpop content, interval for seconds between post, " +
                   "and count for number of posts.")
+@discord.app_commands.default_permissions(manage_guild=True)
 async def autofeed(interaction: discord.Interaction, query: str | None = None, interval: int = 20, count: int = 5):
-
-    # Gather roles if a 
     role_ids = find_closest_role(query=query, count=count)
     if len(role_ids) < count and not (query not in ["r", "random"] and len(role_ids) == 1):
         text = f"Could not find enough roles"
