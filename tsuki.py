@@ -99,6 +99,7 @@ async def feed(interaction: discord.Interaction, query: str | None = None):
     # Send the message and get the sent message
     await interaction.response.send_message(role_ids_and_urls[0][1])
     sent_message = await interaction.original_response()
+    print("sent message", sent_message.id)
 
     # React to the sent message with feedback emotes
     emotes = [UPVOTE_EMOTE, REPORT_EMOTE]
