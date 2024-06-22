@@ -117,7 +117,7 @@ async def feed(interaction: discord.Interaction, query: str | None = None):
         await interaction.response.send_message(text, delete_after=30)
         return
 
-    role_ids_and_urls = get_random_link_for_each_role(role_ids)
+    role_ids_and_urls = get_random_link_for_each_role(role_ids, min_age)
     if not role_ids_and_urls:
         text = f"Could not find a content link for role id `{role_ids[0]}` given query `{query if query else 'random'}`. This message will disappear in 30s."
         print(text)
@@ -178,10 +178,11 @@ async def autofeed(interaction: discord.Interaction, query: str | None = None, i
 
 async def autofeed_command(interaction: discord.Interaction, query: str | None, interval: int, count: int):
     await interaction.response.defer(thinking=True)
+    min_age = get_min_age(interaction.guild_id)
     if query in [None, "r", "random"]:
-        role_ids = get_random_roles(count)
+        role_ids = get_random_roles(count, min_age)
     else:
-        role_ids = get_closest_roles(query, count)
+        role_ids = get_closest_roles(query, min_age, count)
 
     if not role_ids:
         text = "Found no roles"
@@ -196,11 +197,11 @@ async def autofeed_command(interaction: discord.Interaction, query: str | None, 
         temp = count // temp + 1
         role_ids = (role_ids * temp)[:count]
 
-    role_ids_and_urls = get_random_link_for_each_role(role_ids=role_ids)
+    role_ids_and_urls = get_random_link_for_each_role(role_ids=role_ids, min_age=min_age)
 
     # One retry attempt incase a role had a full recently sent queue
     if not role_ids_and_urls or len(role_ids_and_urls) != count:
-        role_ids_and_urls = get_random_link_for_each_role(role_ids=role_ids)
+        role_ids_and_urls = get_random_link_for_each_role(role_ids=role_ids, min_age=min_age)
 
     # Proceed only if we got more than half of the count urls
     if not role_ids_and_urls or len(role_ids_and_urls) < count // 2:

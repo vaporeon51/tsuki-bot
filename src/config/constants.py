@@ -17,3 +17,6 @@ INITIAL_REACT_CAP = 100
 
 # Size of most recently sent URLs queue to prevent duplicates
 RECENTLY_SENT_QUEUE_SIZE = 10
+
+# Size of cache for guild settings
+GUILD_SETTINGS_CACHE_SIZE = 100
