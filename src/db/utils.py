@@ -88,7 +88,7 @@ def get_random_roles(count: int, min_age: str) -> list[str] | None:
             return result
 
 
-def get_random_link_for_each_role(role_ids: list[str], min_age: str) -> list[str] | None:
+def get_random_link_for_each_role(role_ids: list[str], min_age: str) -> list[tuple[str, str]] | None:
     """Get a random content link given a role id."""
 
     if role_ids is None or len(role_ids) == 0:
