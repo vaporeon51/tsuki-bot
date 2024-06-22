@@ -129,33 +129,38 @@ async def autofeed(interaction: discord.Interaction, query: str | None = None, i
 
 
 async def autofeed_command(interaction: discord.Interaction, query: str | None, interval: int, count: int):
+    await interaction.response.defer(thinking=True)
     if query in [None, "r", "random"]:
         role_ids = get_random_roles(count)
     else:
         role_ids = get_closest_roles(query, count)
-        temp = len(role_ids)
-        temp = count // temp + 1
-        role_ids = (role_ids * temp)[:count]
-    
-    print(role_ids)
+    temp = len(role_ids)
+    temp = count // temp + 1
+    role_ids = (role_ids * temp)[:count]
 
-    if not role_ids or len(role_ids) < count:
+    print(role_ids)
+    print(len(role_ids))
+
+    if not role_ids or len(role_ids) != count:
         text = f"Could not find enough roles"
         print(text)
-        await interaction.response.send_message(text, delete_after=30)
+        message = await interaction.followup.send(content=text, wait=True)
+        await message.delete(delay=30)
         return
     
     urls = get_random_link_for_each_role(role_ids=role_ids)
-    print(urls)
+    if not urls or len(urls) != count:
+        urls = get_random_link_for_each_role(role_ids=role_ids)
     if not urls or len(urls) != count:
         text = f"Could not find {count} pieces of content"
         print(text)
-        await interaction.response.send_message(text, delete_after=30)
+        message = await interaction.followup.send(content=text, wait=True)
+        await message.delete(delay=30)
         return
     
     try:
         text = f"Starting feed of `{query if query else 'random'}`! We hope you enjoy your meal {TSUKI_NOM}"
-        await interaction.response.send_message(content=text)
+        await interaction.followup.send(content=text)
     except Exception as e:
         print(e)
         return
@@ -167,7 +172,7 @@ async def autofeed_command(interaction: discord.Interaction, query: str | None, 
     tasks = []
     try:
         for url, role_id in zip(urls, role_ids):
-            await asyncio.shield(perform_autofeed_critical_opertaions(message, url, role_id, tasks))
+            message = await asyncio.shield(perform_autofeed_critical_opertaions(message, url, role_id, tasks))
             if url != urls[-1]:
                 await asyncio.sleep(interval)
 
@@ -180,7 +185,7 @@ async def autofeed_command(interaction: discord.Interaction, query: str | None, 
         await message.reply(" ".join(text))
         await asyncio.shield(asyncio.gather(*tasks))
 
-async def perform_autofeed_critical_opertaions(message: discord.Message, url: str, role_id: int, tasks: list[asyncio.Task]):
+async def perform_autofeed_critical_opertaions(message: discord.Message, url: str, role_id: int, tasks: list[asyncio.Task]) -> discord.Message:
     message = await message.reply(content=url)
 
     emotes = [UPVOTE_EMOTE, REPORT_EMOTE]
@@ -189,6 +194,7 @@ async def perform_autofeed_critical_opertaions(message: discord.Message, url: st
     
     reaction_gathering_task = asyncio.create_task(gather_reactions(message, url, role_id))
     tasks.append(reaction_gathering_task)
+    return message
 
 @discord.app_commands.default_permissions(manage_guild=True)
 class Admin(discord.app_commands.Group):
