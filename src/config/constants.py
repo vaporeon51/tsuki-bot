@@ -1,5 +1,7 @@
 UPVOTE_EMOTE = "❤️"
 REPORT_EMOTE = "⚠️"
+TSUKI_NOM = "<a:tsukinom:1253794922348412990>"
+TSUKI_HARAM_HUG = "<a:tsukiharamhug:1253794454213492927>"
 
 # Number of seconds to wait before updating db based on reactions
 REACT_WAIT_SEC = 3 * 60

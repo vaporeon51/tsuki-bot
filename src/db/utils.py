@@ -39,14 +39,18 @@ def get_closest_roles(query: str, count: int = 1) -> list[str] | None:
                         ) AS match_count
                     FROM role_info, query
                     WHERE NOW() > birthday + interval '18 year 1 month'
+                ),
+                maxmatches AS (
+                    SELECT MAX(match_count) AS max_matches
+                    FROM matches
                 )
-                SELECT role_id, match_count
+                SELECT role_id
                 FROM matches
-                WHERE match_count > 0
-                ORDER BY match_count DESC, RANDOM()
-                LIMIT 1;
+                JOIN maxmatches ON matches.match_count = maxmatches.max_matches
+                ORDER BY RANDOM()
+                LIMIT %s;
                 """,
-                (query,),
+                (query, count),
             )
 
             # Fetch the first result
@@ -54,7 +58,7 @@ def get_closest_roles(query: str, count: int = 1) -> list[str] | None:
 
             if not result:
                 return None
-            return [result[0]]
+            return result
 
 
 def get_random_roles(count: int) -> list[str] | None:
@@ -121,7 +125,8 @@ def get_random_link_for_each_role(role_ids: list[str]) -> list[str] | None:
                 FROM numbered_urls
                 WHERE row_num <= (
                     SELECT COUNT(*) FROM (SELECT unnest(%s::TEXT[]) AS id) WHERE id = numbered_urls.role_id
-                );
+                )
+                ORDER BY RANDOM();
                 """,
                 (role_ids, INITIAL_REACT_CAP, SAMPLING_EXPONENT, REPORT_THRESHOLD, recently_sent_queue, role_ids),
             )
