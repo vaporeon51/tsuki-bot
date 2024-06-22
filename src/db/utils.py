@@ -1,5 +1,4 @@
 from collections import defaultdict, deque
-from typing import List
 
 import psycopg
 
@@ -17,11 +16,8 @@ from . import CONN_DICT
 RECENTLY_SENT_QUEUES = defaultdict(lambda: deque(maxlen=RECENTLY_SENT_QUEUE_SIZE))
 
 
-# TODO implement count logic returning all roles with max count (if count > 1)
 def get_closest_roles(query: str, count: int = 1) -> list[str] | None:
-    """
-    Given a query find the best role that matches with the query.
-    """
+    """Get up to count closest role IDs to the query."""
     with psycopg.connect(**CONN_DICT) as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -46,6 +42,7 @@ def get_closest_roles(query: str, count: int = 1) -> list[str] | None:
                 SELECT role_id
                 FROM matches
                 JOIN maxmatches ON matches.match_count = maxmatches.max_matches
+                WHERE matches.match_count > 0
                 ORDER BY RANDOM()
                 LIMIT %s;
                 """,
@@ -91,7 +88,7 @@ def get_random_roles(count: int) -> list[str] | None:
             return result
 
 
-def get_random_link_for_each_role(role_ids: list[str]) -> list[str] | None:
+def get_random_link_for_each_role(role_ids: list[str]) -> list[tuple[str, str]] | None:
     """Get a random content link given a role id."""
 
     if role_ids is None or len(role_ids) == 0:
@@ -145,14 +142,10 @@ def get_random_link_for_each_role(role_ids: list[str]) -> list[str] | None:
 
                 for id in missing_roles:
                     RECENTLY_SENT_QUEUES[id].clear()
-                return None
-
-            ret = []
 
             for role, url in result:
                 RECENTLY_SENT_QUEUES[role].append(url)
-                ret.append(url)
-            return ret
+            return result
 
 
 def update_given_emote_counts(role_id: str, url: str, count_by_emoji: dict[str, int]) -> None:

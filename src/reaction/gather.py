@@ -2,10 +2,11 @@ import asyncio
 
 import discord
 
-from src.db.utils import update_given_emote_counts
 from src.config.constants import REACT_WAIT_SEC
+from src.db.utils import update_given_emote_counts
 
-async def gather_reactions(message: discord.WebhookMessage | discord.InteractionMessage, url: str, role_id:str):
+
+async def gather_reactions(message: discord.Message, url: str, role_id: str):
     """
     Gathers the reaction of message
     """
