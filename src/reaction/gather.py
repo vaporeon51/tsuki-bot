@@ -1,0 +1,18 @@
+import asyncio
+
+import discord
+
+from src.config.constants import REACT_WAIT_SEC
+from src.db.utils import update_given_emote_counts
+
+
+async def gather_reactions(message: discord.Message, url: str, role_id: str):
+    """
+    Gathers the reaction of message
+    """
+    await asyncio.sleep(REACT_WAIT_SEC)
+
+    message = await message.channel.fetch_message(message.id)
+
+    count_by_emote = {emote.emoji: emote.count for emote in message.reactions}
+    update_given_emote_counts(role_id, url, count_by_emote)

@@ -16,11 +16,8 @@ from . import CONN_DICT
 RECENTLY_SENT_QUEUES = defaultdict(lambda: deque(maxlen=RECENTLY_SENT_QUEUE_SIZE))
 
 
-# TODO implement count logic returning all roles with max count (if count > 1)
-def get_closest_roles(query: str, min_age: int, count: int = 1) -> list[str] | None:
-    """
-    Given a query find the best role that matches with the query.
-    """
+def get_closest_roles(query: str, min_age: str, count: int = 1) -> list[str] | None:
+    """Get up to count closest role IDs to the query."""
     with psycopg.connect(**CONN_DICT) as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -37,22 +34,27 @@ def get_closest_roles(query: str, min_age: int, count: int = 1) -> list[str] | N
                         ) AS match_count
                     FROM role_info, query
                     WHERE NOW() > birthday + interval '{min_age}'
+                ),
+                maxmatches AS (
+                    SELECT MAX(match_count) AS max_matches
+                    FROM matches
                 )
-                SELECT role_id, match_count
+                SELECT role_id
                 FROM matches
-                WHERE match_count > 0
-                ORDER BY match_count DESC, RANDOM()
-                LIMIT 1;
+                JOIN maxmatches ON matches.match_count = maxmatches.max_matches
+                WHERE matches.match_count > 0
+                ORDER BY RANDOM()
+                LIMIT %s;
                 """,
-                (query,),
+                (query, count),
             )
 
             # Fetch the first result
-            result = cur.fetchone()
+            result = [role[0] for role in cur.fetchall()]
 
             if not result:
                 return None
-            return [result[0]]
+            return result
 
 
 def get_random_roles(count: int, min_age: str) -> list[str] | None:
@@ -119,7 +121,8 @@ def get_random_link_for_each_role(role_ids: list[str], min_age: str) -> list[str
                 FROM numbered_urls
                 WHERE row_num <= (
                     SELECT COUNT(*) FROM (SELECT unnest(%s::TEXT[]) AS id) WHERE id = numbered_urls.role_id
-                );
+                )
+                ORDER BY RANDOM();
                 """,
                 (
                     role_ids,
@@ -146,14 +149,10 @@ def get_random_link_for_each_role(role_ids: list[str], min_age: str) -> list[str
 
                 for id in missing_roles:
                     RECENTLY_SENT_QUEUES[id].clear()
-                return None
-
-            ret = []
 
             for role, url in result:
                 RECENTLY_SENT_QUEUES[role].append(url)
-                ret.append(url)
-            return ret
+            return result
 
 
 def update_given_emote_counts(role_id: str, url: str, count_by_emoji: dict[str, int]) -> None:
