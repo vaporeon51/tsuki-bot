@@ -15,6 +15,7 @@ IS_DEV = os.environ.get("IS_DEV", "false") == "true"
 # Local imports after dotenv to ensure environment variables are available
 from src.config.constants import REACT_WAIT_SEC, REPORT_EMOTE, TSUKI_HARAM_HUG, TSUKI_NOM, UPVOTE_EMOTE
 from src.content_update import run_content_links_update
+from src.db.guild_settings import get_min_age, set_min_age
 from src.db.utils import get_closest_roles, get_random_link_for_each_role, get_random_roles, update_given_emote_counts
 from src.reaction.gather import gather_reactions
 
@@ -72,15 +73,15 @@ async def on_ready():
         update_content_loop.start()
 
 
-@bot.tree.command(
-    name="feed", description="Get kpop content using idol or group name. Use `r` or `random` for random idol."
-)
-@discord.app_commands.describe(query="Idols and groups you want to include")
+@bot.tree.command(name="feed", description="Get kpop content using idol or group name.")
+@discord.app_commands.describe(query="Idols and groups you want to include. Use `r` or `random` for random idol.")
 async def feed(interaction: discord.Interaction, query: str | None = None):
+
+    min_age = get_min_age(interaction.guild_id)
     if query in [None, "r", "random"]:
-        role_ids = get_random_roles(1)
+        role_ids = get_random_roles(1, min_age)
     else:
-        role_ids = get_closest_roles(query)
+        role_ids = get_closest_roles(query, min_age)
 
     if not role_ids:
         text = f"Could not find a role for `{query if query else 'random'}`. This message will disappear in 30s."
@@ -88,7 +89,7 @@ async def feed(interaction: discord.Interaction, query: str | None = None):
         await interaction.response.send_message(text, delete_after=30)
         return
 
-    role_ids_and_urls = get_random_link_for_each_role(role_ids)
+    role_ids_and_urls = get_random_link_for_each_role(role_ids, min_age)
     if not role_ids_and_urls:
         text = f"Could not find a content link for role id `{role_ids[0]}` given query `{query if query else 'random'}`. This message will disappear in 30s."
         print(text)
@@ -125,12 +126,12 @@ async def feed(interaction: discord.Interaction, query: str | None = None):
     count="Number of posts (default:5, max:120)",
 )
 @discord.app_commands.default_permissions(manage_guild=True)
+@discord.app_commands.guild_only()
 async def autofeed(interaction: discord.Interaction, query: str | None = None, interval: int = 20, count: int = 5):
-    if interaction.guild_id is None:
-        await interaction.response.send_message("Cannot use command is this context. Only function in servers.")
-        return
     if interval < 2 or interval > 60 * 60 * 24:
-        await interaction.response.send_message(f"Interval must be between 2 seconds and 24 hours ({60 * 60 * 24}).", ephemeral=True)
+        await interaction.response.send_message(
+            f"Interval must be between 2 seconds and 24 hours ({60 * 60 * 24}).", ephemeral=True
+        )
         return
     if count > 120:
         await interaction.response.send_message("Count cannot be more than 120", ephemeral=True)
@@ -147,13 +148,14 @@ async def autofeed(interaction: discord.Interaction, query: str | None = None, i
 
 async def autofeed_command(interaction: discord.Interaction, query: str | None, interval: int, count: int):
     await interaction.response.defer(thinking=True)
+    min_age = get_min_age(interaction.guild_id)
     if query in [None, "r", "random"]:
-        role_ids = get_random_roles(count)
+        role_ids = get_random_roles(count, min_age)
     else:
-        role_ids = get_closest_roles(query, count)
+        role_ids = get_closest_roles(query, min_age, count)
 
     if not role_ids:
-        text = "Found no roles"
+        text = f"Could not find a role for `{query if query else 'random'}`. This message will disappear in 30s."
         print(text)
         message = await interaction.followup.send(content=text, wait=True)
         await message.delete(delay=30)
@@ -165,11 +167,11 @@ async def autofeed_command(interaction: discord.Interaction, query: str | None, 
         temp = count // temp + 1
         role_ids = (role_ids * temp)[:count]
 
-    role_ids_and_urls = get_random_link_for_each_role(role_ids=role_ids)
+    role_ids_and_urls = get_random_link_for_each_role(role_ids=role_ids, min_age=min_age)
 
     # One retry attempt incase a role had a full recently sent queue
     if not role_ids_and_urls or len(role_ids_and_urls) != count:
-        role_ids_and_urls = get_random_link_for_each_role(role_ids=role_ids)
+        role_ids_and_urls = get_random_link_for_each_role(role_ids=role_ids, min_age=min_age)
 
     # Proceed only if we got more than half of the count urls
     if not role_ids_and_urls or len(role_ids_and_urls) < count // 2:
@@ -181,7 +183,7 @@ async def autofeed_command(interaction: discord.Interaction, query: str | None, 
 
     text = (
         f"Starting feed of `{query if query else 'random'}`!\n"
-        + f"Found {len(role_ids_and_urls)} ingredients serving every {interval} seconds.\n"
+        + f"Found `{len(role_ids_and_urls)}` ingredient(s) serving every `{interval}` seconds.\n"
         + f"We hope you enjoy your meal {TSUKI_NOM}"
     )
     try:
@@ -201,7 +203,7 @@ async def autofeed_command(interaction: discord.Interaction, query: str | None, 
                 await asyncio.sleep(interval)
 
     except asyncio.CancelledError:
-        text.append("An Administator has cancelled this autofeed session.")
+        text.append("An admin has cancelled this autofeed session.")
         return
     finally:
         text.append(f"Thank you for choosing Fukotomi Diner {TSUKI_HARAM_HUG}")
@@ -223,6 +225,7 @@ async def perform_autofeed_critical_operations(
 
 
 @discord.app_commands.default_permissions(manage_guild=True)
+@discord.app_commands.guild_only()
 class Admin(discord.app_commands.Group):
     def __init__(self):
         super().__init__(name="admin", description="Commands for managing TsukiBot")
@@ -239,6 +242,35 @@ class Admin(discord.app_commands.Group):
         text = "Cancelling all autofeed commands"
         print(f"Guild: {interaction.guild_id} Request: {text}")
         await interaction.response.send_message(text)
+
+    @discord.app_commands.command(
+        name="set_age_limit", description="Set the minimum age of idol at content upload time."
+    )
+    @discord.app_commands.describe(min_age="Minimum age. E.g. `18 year 6 month`, `19 year 3 week`")
+    async def set_age_limit(self, interaction: discord.Interaction, min_age: str):
+        assert interaction.guild_id is not None
+        # Sanitize the input a bit to make it more lenient
+        min_age = min_age.lower()
+        for plural, singular in {"years": "year", "months": "month", "weeks": "week", "days": "day"}.items():
+            min_age = min_age.replace(plural, singular)
+        try:
+            if "year" not in min_age or int(min_age.split("year")[0]) < 18:
+                await interaction.response.send_message(
+                    "Min age should be at least 18, e.g. `18 year 1 month`", ephemeral=True
+                )
+
+            else:
+                set_min_age(interaction.guild_id, min_age)
+                await interaction.response.send_message(
+                    f"Min age has been successfully set to `{min_age}`.", ephemeral=True
+                )
+
+        except Exception as e:
+            print(f"Guild setting failed for guild {interaction.guild_id}: {e}")
+            await interaction.response.send_message(
+                "Min age was not poorly formatted. Should be in the format `22 year 2 month 2 week`", ephemeral=True
+            )
+            raise e
 
 
 bot.run(TOKEN)
