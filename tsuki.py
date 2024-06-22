@@ -73,31 +73,6 @@ async def on_ready():
         update_content_loop.start()
 
 
-@bot.tree.command(name="set_age_limit", description="Set the minimum age of idol at content upload time.`")
-@discord.app_commands.describe(min_age="Minimum age. E.g. `18 year 6 month`, `19 year 3 week`")
-@discord.app_commands.default_permissions(manage_guild=True)
-async def set_age_limit(interaction: discord.Interaction, min_age: str):
-    assert interaction.guild_id is not None
-    try:
-        if "year" not in min_age or int(min_age.split("year")[0]) < 18:
-            await interaction.response.send_message(
-                "Min age should be at least 18, e.g. `18 year 1 month`", ephemeral=True
-            )
-
-        else:
-            set_min_age(interaction.guild_id, min_age)
-            await interaction.response.send_message(
-                f"Min age has been successfully set to `{min_age}`.", ephemeral=True
-            )
-
-    except Exception as e:
-        print(f"Guild setting failed for guild {interaction.guild_id}: {e}")
-        await interaction.response.send_message(
-            "Min age was not poorly formatted. Should be in the format `22 year 2 month 2 week`", ephemeral=True
-        )
-        raise e
-
-
 @bot.tree.command(name="feed", description="Get kpop content using idol or group name.")
 @discord.app_commands.describe(query="Idols and groups you want to include. Use `r` or `random` for random idol.")
 async def feed(interaction: discord.Interaction, query: str | None = None):
@@ -151,10 +126,8 @@ async def feed(interaction: discord.Interaction, query: str | None = None):
     count="Number of posts (default:5, max:120)",
 )
 @discord.app_commands.default_permissions(manage_guild=True)
+@discord.app_commands.guild_only()
 async def autofeed(interaction: discord.Interaction, query: str | None = None, interval: int = 20, count: int = 5):
-    if interaction.guild_id is None:
-        await interaction.response.send_message("Cannot use command is this context. Only function in servers.")
-        return
     if interval < 2 or interval > 60 * 60 * 24:
         await interaction.response.send_message(
             f"Interval must be between 2 seconds and 24 hours ({60 * 60 * 24}).", ephemeral=True
@@ -182,7 +155,7 @@ async def autofeed_command(interaction: discord.Interaction, query: str | None, 
         role_ids = get_closest_roles(query, min_age, count)
 
     if not role_ids:
-        text = "Found no roles"
+        text = f"Could not find a role for `{query if query else 'random'}`. This message will disappear in 30s."
         print(text)
         message = await interaction.followup.send(content=text, wait=True)
         await message.delete(delay=30)
@@ -210,7 +183,7 @@ async def autofeed_command(interaction: discord.Interaction, query: str | None, 
 
     text = (
         f"Starting feed of `{query if query else 'random'}`!\n"
-        + f"Found `{len(role_ids_and_urls)}` ingredients serving every `{interval}` seconds.\n"
+        + f"Found `{len(role_ids_and_urls)}` ingredient(s) serving every `{interval}` seconds.\n"
         + f"We hope you enjoy your meal {TSUKI_NOM}"
     )
     try:
@@ -252,6 +225,7 @@ async def perform_autofeed_critical_operations(
 
 
 @discord.app_commands.default_permissions(manage_guild=True)
+@discord.app_commands.guild_only()
 class Admin(discord.app_commands.Group):
     def __init__(self):
         super().__init__(name="admin", description="Commands for managing TsukiBot")
@@ -268,6 +242,31 @@ class Admin(discord.app_commands.Group):
         text = "Cancelling all autofeed commands"
         print(f"Guild: {interaction.guild_id} Request: {text}")
         await interaction.response.send_message(text)
+
+    @discord.app_commands.command(
+        name="set_age_limit", description="Set the minimum age of idol at content upload time."
+    )
+    @discord.app_commands.describe(min_age="Minimum age. E.g. `18 year 6 month`, `19 year 3 week`")
+    async def set_age_limit(self, interaction: discord.Interaction, min_age: str):
+        assert interaction.guild_id is not None
+        try:
+            if "year" not in min_age or int(min_age.split("year")[0]) < 18:
+                await interaction.response.send_message(
+                    "Min age should be at least 18, e.g. `18 year 1 month`", ephemeral=True
+                )
+
+            else:
+                set_min_age(interaction.guild_id, min_age)
+                await interaction.response.send_message(
+                    f"Min age has been successfully set to `{min_age}`.", ephemeral=True
+                )
+
+        except Exception as e:
+            print(f"Guild setting failed for guild {interaction.guild_id}: {e}")
+            await interaction.response.send_message(
+                "Min age was not poorly formatted. Should be in the format `22 year 2 month 2 week`", ephemeral=True
+            )
+            raise e
 
 
 bot.run(TOKEN)
