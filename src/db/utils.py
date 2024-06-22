@@ -21,7 +21,7 @@ def get_closest_roles(query: str, min_age: str, count: int = 1) -> list[str] | N
     with psycopg.connect(**CONN_DICT) as conn:
         with conn.cursor() as cur:
             cur.execute(
-                f"""
+                """
                 WITH query AS (
                     SELECT string_to_array(regexp_replace(LOWER(TRIM(%s)), '[^a-zA-Z0-9\s]', '', 'g'), ' ') AS terms
                 ),
@@ -33,7 +33,7 @@ def get_closest_roles(query: str, min_age: str, count: int = 1) -> list[str] | N
                             WHERE mga = ANY (query.terms)
                         ) AS match_count
                     FROM role_info, query
-                    WHERE NOW() > birthday + interval '{min_age}'
+                    WHERE NOW() > birthday + %s::INTERVAL
                 ),
                 maxmatches AS (
                     SELECT MAX(match_count) AS max_matches
@@ -46,7 +46,7 @@ def get_closest_roles(query: str, min_age: str, count: int = 1) -> list[str] | N
                 ORDER BY RANDOM()
                 LIMIT %s;
                 """,
-                (query, count),
+                (query, min_age, count),
             )
 
             # Fetch the first result
@@ -62,10 +62,11 @@ def get_random_roles(count: int, min_age: str) -> list[str] | None:
 
     # Determines if cross join is needed for this query
     query_part = ""
-    params = (count,)
+    params = ()
     if count > 1:
         query_part = ", generate_series(1, %s)"
         params += (count,)
+    params += (min_age, count)
 
     with psycopg.connect(**CONN_DICT) as conn:
         with conn.cursor() as cur:
@@ -74,15 +75,15 @@ def get_random_roles(count: int, min_age: str) -> list[str] | None:
                 SELECT role_id
                 FROM role_info"""
                 + query_part
-                + f"""
-                WHERE NOW() > birthday + interval '{min_age}'
+                + """
+                WHERE NOW() > birthday + %s::INTERVAL
                 ORDER BY random(), role_id DESC
                 LIMIT %s
                 """,
                 params,
             )
             result = [role[0] for role in cur.fetchall()]
-
+            print(result)
             if not result or len(result) < count:
                 return None
             return result
@@ -95,11 +96,12 @@ def get_random_link_for_each_role(role_ids: list[str], min_age: str) -> list[tup
         return None
 
     recently_sent_queue = [item for role in role_ids for item in RECENTLY_SENT_QUEUES[role]]
+    print(min_age)
 
     with psycopg.connect(**CONN_DICT) as conn:
         with conn.cursor() as cur:
             cur.execute(
-                f"""
+                """
                 WITH bday AS (
                     SELECT role_id, birthday
                     FROM role_info
@@ -114,7 +116,7 @@ def get_random_link_for_each_role(role_ids: list[str], min_age: str) -> list[tup
                     JOIN content_links cl ON bday.role_id = cl.role_id
                     WHERE cl.num_reports < %s
                     AND cl.url != ALL(%s)
-                    AND cl.uploaded_date > bday.birthday + INTERVAL '{min_age}'
+                    AND cl.uploaded_date > bday.birthday + %s::INTERVAL
                 )
 
                 SELECT role_id, url
@@ -130,6 +132,7 @@ def get_random_link_for_each_role(role_ids: list[str], min_age: str) -> list[tup
                     SAMPLING_EXPONENT,
                     REPORT_THRESHOLD,
                     recently_sent_queue,
+                    min_age,
                     role_ids,
                 ),
             )
