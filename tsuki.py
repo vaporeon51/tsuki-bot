@@ -249,6 +249,10 @@ class Admin(discord.app_commands.Group):
     @discord.app_commands.describe(min_age="Minimum age. E.g. `18 year 6 month`, `19 year 3 week`")
     async def set_age_limit(self, interaction: discord.Interaction, min_age: str):
         assert interaction.guild_id is not None
+        # Sanitize the input a bit to make it more lenient
+        min_age = min_age.lower()
+        for plural, singular in {"years": "year", "months": "month", "weeks": "week", "days": "day"}.items():
+            min_age = min_age.replace(plural, singular)
         try:
             if "year" not in min_age or int(min_age.split("year")[0]) < 18:
                 await interaction.response.send_message(
