@@ -1,4 +1,3 @@
-import os
 from collections import defaultdict, deque
 from typing import List
 
@@ -13,12 +12,12 @@ from src.config.constants import (
     UPVOTE_EMOTE,
 )
 
-DATABASE_URL = os.environ.get("DATABASE_URL")
-CONN_DICT = psycopg.conninfo.conninfo_to_dict(DATABASE_URL)
+from . import CONN_DICT
+
 RECENTLY_SENT_QUEUES = defaultdict(lambda: deque(maxlen=RECENTLY_SENT_QUEUE_SIZE))
 
 
-#TODO implement count logic returning all roles with max count (if count > 1)
+# TODO implement count logic returning all roles with max count (if count > 1)
 def get_closest_roles(query: str, count: int = 1) -> list[str] | None:
     """
     Given a query find the best role that matches with the query.

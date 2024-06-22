@@ -4,6 +4,7 @@ pandas
 Levenshtein
 SQLAlchemy
 psycopg[binary,pool]
+requests
 
 # Jupyter
 ipykernel

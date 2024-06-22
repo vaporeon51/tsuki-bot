@@ -1,19 +1,23 @@
 import asyncio
-from itertools import zip_longest
 import os
 from pathlib import Path
 
 import discord
-from discord.ext import commands
+from discord.ext import commands, tasks
 from dotenv import load_dotenv
 
 # Load environment variables from the root repository path
 WEB_APP_PATH = Path(__file__).parent.resolve()
 load_dotenv(WEB_APP_PATH.joinpath(".env").as_posix())
 
+IS_DEV = os.environ.get("IS_DEV", 'false') == 'true'
 
 # Local imports after dotenv to ensure environment variables are available
 from src.config.constants import REACT_WAIT_SEC, REPORT_EMOTE, UPVOTE_EMOTE, TSUKI_NOM, TSUKI_HARAM_HUG
+
+if not IS_DEV:
+    from src.content_update import run_content_links_update
+
 from src.db.utils import get_closest_roles, get_random_link_for_each_role, get_random_roles, update_given_emote_counts
 from src.reaction.gather import gather_reactions
 
@@ -45,6 +49,29 @@ class TsukiBot(commands.Bot):
                     self.active_commands[guild_id][command_name] = []
     
 bot = TsukiBot()
+
+
+@tasks.loop(seconds=60 * 60 * 24)
+async def update_content_loop():
+    await run_content_links_update()
+
+
+@bot.event
+async def on_ready():
+    try:
+        print(f"Signed in as { bot.user }")
+        await bot.tree.sync()
+        print("Successfully synced commands.")
+    except Exception as e:
+        print(e)
+
+    print(f"Currently in {len(bot.guilds)} servers:")
+    for server in bot.guilds:
+        print("Server name:", server.name, ", owner:", server.owner.name, "num of members:", server.member_count)
+    
+    if not IS_DEV:
+        update_content_loop.start()
+
 
 @bot.tree.command(
     name="feed", description="Get kpop content using idol or group name. Use `r` or `random` for random idol."
@@ -112,7 +139,7 @@ async def autofeed_command(interaction: discord.Interaction, query: str | None, 
     
     print(role_ids)
 
-    if not role_ids or (len(role_ids) < count and not (query not in [None, "r", "random"] and len(role_ids) == 1)):
+    if not role_ids or len(role_ids) < count:
         text = f"Could not find enough roles"
         print(text)
         await interaction.response.send_message(text, delete_after=30)
@@ -120,7 +147,7 @@ async def autofeed_command(interaction: discord.Interaction, query: str | None, 
     
     urls = get_random_link_for_each_role(role_ids=role_ids)
     print(urls)
-    if not urls or len(urls) < count:
+    if not urls or len(urls) != count:
         text = f"Could not find {count} pieces of content"
         print(text)
         await interaction.response.send_message(text, delete_after=30)
@@ -139,9 +166,10 @@ async def autofeed_command(interaction: discord.Interaction, query: str | None, 
     text = []
     tasks = []
     try:
-        for url, role_id in zip_longest(urls, role_ids):
+        for url, role_id in zip(urls, role_ids):
             await asyncio.shield(perform_autofeed_critical_opertaions(message, url, role_id, tasks))
-            await asyncio.sleep(interval)
+            if url != urls[-1]:
+                await asyncio.sleep(interval)
 
         
     except asyncio.CancelledError:
@@ -174,19 +202,5 @@ class Admin(discord.app_commands.Group):
         text = "Cancelling all autofeed commands"
         print(f"Guild: {interaction.guild_id} Request: {text}")
         await interaction.response.send_message(text)
-
-
-@bot.event
-async def on_ready():
-    try:
-        print(f"Signed in as { bot.user }")
-        await bot.tree.sync()
-        print("Successfully synced commands.")
-    except Exception as e:
-        print(e)
-
-    print(f"Currently in {len(bot.guilds)} servers:")
-    for server in bot.guilds:
-        print("Server name:", server.name, ", owner:", server.owner.name, "num of members:", server.member_count)
 
 bot.run(TOKEN)
