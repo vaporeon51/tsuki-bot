@@ -83,7 +83,7 @@ def get_random_roles(count: int, min_age: str) -> list[str] | None:
                 params,
             )
             result = [role[0] for role in cur.fetchall()]
-            print(result)
+
             if not result or len(result) < count:
                 return None
             return result
