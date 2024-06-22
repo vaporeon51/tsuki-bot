@@ -73,9 +73,8 @@ async def on_ready():
         update_content_loop.start()
 
 
-@bot.tree.command(
-    name="set_age_limit", description="Set the minimum age of idol at content upload time. E.g. `19 year 1 month`"
-)
+@bot.tree.command(name="set_age_limit", description="Set the minimum age of idol at content upload time.`")
+@discord.app_commands.describe(min_age="Minimum age. E.g. `18 year 6 month`, `19 year 3 week`")
 @discord.app_commands.default_permissions(manage_guild=True)
 async def set_age_limit(interaction: discord.Interaction, min_age: str):
     assert interaction.guild_id is not None
@@ -99,10 +98,8 @@ async def set_age_limit(interaction: discord.Interaction, min_age: str):
         raise e
 
 
-@bot.tree.command(
-    name="feed", description="Get kpop content using idol or group name. Use `r` or `random` for random idol."
-)
-@discord.app_commands.describe(query="Idols and groups you want to include")
+@bot.tree.command(name="feed", description="Get kpop content using idol or group name.")
+@discord.app_commands.describe(query="Idols and groups you want to include. Use `r` or `random` for random idol.")
 async def feed(interaction: discord.Interaction, query: str | None = None):
 
     min_age = get_min_age(interaction.guild_id)
@@ -213,7 +210,7 @@ async def autofeed_command(interaction: discord.Interaction, query: str | None, 
 
     text = (
         f"Starting feed of `{query if query else 'random'}`!\n"
-        + f"Found {len(role_ids_and_urls)} ingredients serving every {interval} seconds.\n"
+        + f"Found `{len(role_ids_and_urls)}` ingredients serving every `{interval}` seconds.\n"
         + f"We hope you enjoy your meal {TSUKI_NOM}"
     )
     try:
@@ -233,7 +230,7 @@ async def autofeed_command(interaction: discord.Interaction, query: str | None, 
                 await asyncio.sleep(interval)
 
     except asyncio.CancelledError:
-        text.append("An Administator has cancelled this autofeed session.")
+        text.append("An admin has cancelled this autofeed session.")
         return
     finally:
         text.append(f"Thank you for choosing Fukotomi Diner {TSUKI_HARAM_HUG}")
