@@ -15,11 +15,18 @@ IS_DEV = os.environ.get("IS_DEV", "false") == "true"
 # Local imports after dotenv to ensure environment variables are available
 from src.config.constants import REACT_WAIT_SEC, REPORT_EMOTE, TSUKI_HARAM_HUG, TSUKI_NOM, UPVOTE_EMOTE
 from src.content_update import run_content_links_update
+from src.db.autocomplete import get_all_idols_and_groups
 from src.db.guild_settings import get_min_age, set_min_age
 from src.db.utils import get_closest_roles, get_random_link_for_each_role, get_random_roles, update_given_emote_counts
 from src.reaction.gather import gather_reactions
 
 TOKEN = os.environ.get("TOKEN")
+
+QUERY_OPTIONS = set(string for tuple in get_all_idols_and_groups() for strings in tuple for string in strings)
+
+DEV_GUILD = discord.Object(id=1251704246584479857)
+
+print(QUERY_OPTIONS)
 
 
 class TsukiBot(commands.Bot):
@@ -60,7 +67,7 @@ async def update_content_loop():
 async def on_ready():
     try:
         print(f"Signed in as { bot.user }")
-        await bot.tree.sync()
+        await bot.tree.sync(guild=DEV_GUILD)
         print("Successfully synced commands.")
     except Exception as e:
         print(e)
@@ -72,11 +79,15 @@ async def on_ready():
     if not IS_DEV:
         update_content_loop.start()
 
+async def feed_autocomplete(interaction: discord.Interaction, current: str) -> list[discord.app_commands.Choice[str]]:
+    return [discord.app_commands.Choice(name=query_option, value=query_option)
+            for query_option in QUERY_OPTIONS if query_option.startswith(current)
+        ][:25]
 
-@bot.tree.command(name="feed", description="Get kpop content using idol or group name.")
+@bot.tree.command(name="feed", description="Get kpop content using idol or group name.", guilds=[DEV_GUILD])
 @discord.app_commands.describe(query="Idols and groups you want to include. Use `r` or `random` for random idol.")
+@discord.app_commands.autocomplete(query=feed_autocomplete)
 async def feed(interaction: discord.Interaction, query: str | None = None):
-
     min_age = get_min_age(interaction.guild_id)
     if query in [None, "r", "random"]:
         role_ids = get_random_roles(1, min_age)
