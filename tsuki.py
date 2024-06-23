@@ -16,6 +16,7 @@ IS_DEV = os.environ.get("IS_DEV", "false") == "true"
 from src.config.constants import REACT_WAIT_SEC, REPORT_EMOTE, TSUKI_HARAM_HUG, TSUKI_NOM, UPVOTE_EMOTE
 from src.content_update import run_content_links_update
 from src.db.guild_settings import get_min_age, set_min_age
+from src.db.stats import add_stat_count
 from src.db.utils import get_closest_roles, get_random_link_for_each_role, get_random_roles, update_given_emote_counts
 from src.reaction.gather import gather_reactions
 
@@ -106,6 +107,7 @@ async def feed(interaction: discord.Interaction, query: str | None = None):
         await sent_message.add_reaction(emote)
 
     # Wait for feedback to settle
+    add_stat_count("feed")
     await asyncio.sleep(REACT_WAIT_SEC)
 
     # Fetch the message again to count reactions
@@ -144,6 +146,7 @@ async def autofeed(interaction: discord.Interaction, query: str | None = None, i
     if command_name not in bot.active_commands[guild_id]:
         bot.active_commands[guild_id][command_name] = []
     bot.active_commands[guild_id][command_name].append(task)
+    add_stat_count("autofeed")
 
 
 async def autofeed_command(interaction: discord.Interaction, query: str | None, interval: int, count: int):
@@ -242,6 +245,7 @@ class Admin(discord.app_commands.Group):
         text = "Cancelling all autofeed commands"
         print(f"Guild: {interaction.guild_id} Request: {text}")
         await interaction.response.send_message(text)
+        add_stat_count("cancel_all_autofeeds")
 
     @discord.app_commands.command(
         name="set_age_limit", description="Set the minimum age of idol at content upload time."
@@ -270,7 +274,7 @@ class Admin(discord.app_commands.Group):
             await interaction.response.send_message(
                 "Min age was not poorly formatted. Should be in the format `22 year 2 month 2 week`", ephemeral=True
             )
-            raise e
+        add_stat_count("set_age_limit")
 
 
 bot.run(TOKEN)
