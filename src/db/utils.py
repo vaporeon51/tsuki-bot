@@ -96,7 +96,6 @@ def get_random_link_for_each_role(role_ids: list[str], min_age: str) -> list[tup
         return None
 
     recently_sent_queue = [item for role in role_ids for item in RECENTLY_SENT_QUEUES[role]]
-    print(min_age)
 
     with psycopg.connect(**CONN_DICT) as conn:
         with conn.cursor() as cur:
