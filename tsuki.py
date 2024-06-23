@@ -146,7 +146,12 @@ async def autofeed(interaction: discord.Interaction, query: str | None = None, i
     if command_name not in bot.active_commands[guild_id]:
         bot.active_commands[guild_id][command_name] = []
     bot.active_commands[guild_id][command_name].append(task)
-    add_stat_count("autofeed")
+
+    try:
+        await task
+    finally:
+        bot.active_commands[guild_id][command_name].remove(task)
+        add_stat_count("autofeed")
 
 
 async def autofeed_command(interaction: discord.Interaction, query: str | None, interval: int, count: int):
@@ -207,7 +212,6 @@ async def autofeed_command(interaction: discord.Interaction, query: str | None, 
 
     except asyncio.CancelledError:
         text.append("An admin has cancelled this autofeed session.")
-        return
     finally:
         text.append(f"Thank you for choosing Fukotomi Diner {TSUKI_HARAM_HUG}")
         await message.reply(" ".join(text))
