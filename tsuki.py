@@ -46,7 +46,6 @@ class TsukiBot(commands.Bot):
                     command_tasks = self.active_commands[guild_id][command_name]
                     for command_task in command_tasks:
                         command_task.cancel()
-                    self.active_commands[guild_id][command_name] = []
 
 
 bot = TsukiBot()
