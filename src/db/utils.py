@@ -89,6 +89,49 @@ def get_random_roles(count: int, min_age: str) -> list[str] | None:
             return result
 
 
+def get_latest_links_for_roles(
+    num_links: int, skip: int, min_age: str, role_ids: list[str] | None = None
+) -> list[tuple[str, str]] | None:
+    """Get the latest links for role ids, or all roles if role ids are none."""
+
+    with psycopg.connect(**CONN_DICT) as conn:
+        with conn.cursor() as cur:
+            base_query = """
+                WITH bday AS (
+                    SELECT role_id, birthday
+                    FROM role_info
+                    {role_filter}
+                ),
+                ordered_urls AS (
+                    SELECT bday.role_id, cl.url
+                    FROM bday
+                    JOIN content_links cl 
+                    ON bday.role_id = cl.role_id
+                    WHERE cl.num_reports < %s
+                    AND cl.uploaded_date > bday.birthday + %s::INTERVAL
+                    ORDER BY cl.uploaded_date DESC
+                    LIMIT %s OFFSET %s
+                )
+                SELECT role_id, url
+                FROM ordered_urls;
+            """
+
+            role_filter = ""
+            params = [REPORT_THRESHOLD, min_age, num_links, skip]
+            if role_ids:
+                role_filter = "WHERE role_id = ANY(%s)"
+                params.insert(0, role_ids)
+
+            query = base_query.format(role_filter=role_filter)
+            cur.execute(query, params)
+            result = cur.fetchall()
+
+            if not result:
+                return None
+
+            return result
+
+
 def get_random_link_for_each_role(role_ids: list[str], min_age: str) -> list[tuple[str, str]] | None:
     """Get a random content link given a role id."""
 
