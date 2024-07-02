@@ -1,5 +1,5 @@
 from collections import OrderedDict
-from typing import Any, Hashable, Iterator
+from typing import Any, Hashable, Iterator, Optional
 
 
 class LRUCache:
@@ -51,24 +51,24 @@ class TrieNode:
         self._children = temp_list
         self._use_dict = False
 
-    def get_child(self, letter: str) -> "TrieNode" | None:
+    def get_child(self, letter: str) -> Optional["TrieNode"]:
         """Get the child of the current node using its letter alias"""
         try:
-            return self._children[ord(letter) - ord("a")]
+            return self._children[ord(letter[0]) - ord("a")]
         except (KeyError, IndexError):
             return None
 
-    def set_child(self, letter: str) -> "TrieNode":
+    def set_child(self, letter: str) -> Optional["TrieNode"]:
         """Make a child for the current node for the letter alias passed in"""
         child = self.get_child(letter)
         if child:
             return child
 
-        self._children[ord(letter) - ord("a")] = TrieNode()
+        self._children[ord(letter[0]) - ord("a")] = TrieNode()
         self._number_of_children += 1
 
         # is children dense enough to use a list now?
-        if self._number_of_children > TrieNode.MAX_CHILD_NODES_FOR_DICT:
+        if self._number_of_children > TrieNode.MAX_CHILD_NODES_FOR_DICT and self._use_dict:
             self.switch_to_list()
 
         return self.get_child(letter)
@@ -80,14 +80,14 @@ class TrieNode:
             return
 
         if self._use_dict:
-            del self._children[ord(letter) - ord("a")]
+            del self._children[ord(letter[0]) - ord("a")]
         else:
-            self._children[ord(letter) - ord("a")] = None
+            self._children[ord(letter[0]) - ord("a")] = None
 
         self._number_of_children -= 1
 
         # is children sparse enough to use a dict now?
-        if self._number_of_children <= TrieNode.MAX_CHILD_NODES_FOR_DICT:
+        if self._number_of_children <= TrieNode.MAX_CHILD_NODES_FOR_DICT and not self._use_dict:
             self.switch_to_dict()
 
         for child in self.iter_children():
@@ -98,7 +98,7 @@ class TrieNode:
     def set_is_end_of_word(self, is_end_of_word: bool):
         self._is_end_of_word = is_end_of_word
 
-    def iter_children(self) -> Iterator[tuple[int, "TrieNode" | None]]:
+    def iter_children(self) -> Iterator[tuple[int, Optional["TrieNode"]]]:
         """Returns an iterator over the children of the current node"""
         if self._use_dict:
             for key, node in self._children.items():
@@ -155,9 +155,10 @@ class Trie:
     def insert(self, word: str):
         parent = self.root
         for letter in word:
-            parent = parent.get_child(letter)
-            if parent is None:
-                parent = parent.set_child(letter)
+            child = parent.get_child(letter)
+            if child is None:
+                child = parent.set_child(letter)
+            parent = child
 
         parent.set_is_end_of_word(True)
 

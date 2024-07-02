@@ -19,14 +19,18 @@ from src.db.autocomplete import get_all_idols_and_groups
 from src.db.guild_settings import get_min_age, set_min_age
 from src.db.utils import get_closest_roles, get_random_link_for_each_role, get_random_roles, update_given_emote_counts
 from src.reaction.gather import gather_reactions
+from src.utils import Trie
 
 TOKEN = os.environ.get("TOKEN")
 
-QUERY_OPTIONS = set(string for tuple in get_all_idols_and_groups() for strings in tuple for string in strings)
+QUERY_OPTIONS = Trie()
+for outer_list in get_all_idols_and_groups():
+    for inner_tuple in outer_list:
+        for string in inner_tuple:
+            QUERY_OPTIONS.insert(string)
 
-DEV_GUILD = discord.Object(id=1251704246584479857)
-
-print(QUERY_OPTIONS)
+if not IS_DEV:
+    DEV_GUILD = discord.Object(id='1251704246584479857')
 
 
 class TsukiBot(commands.Bot):
@@ -41,6 +45,20 @@ class TsukiBot(commands.Bot):
     async def setup_hook(self):
         self.tree.add_command(Admin())
         asyncio.create_task(self.custom_event_handler())
+
+        try:
+            print(f"Signed in as { bot.user }")
+            if not IS_DEV:
+                bot.tree.copy_global_to(guild=DEV_GUILD)
+                await bot.tree.sync(guild=DEV_GUILD)
+            else:
+                await bot.tree.sync()
+                print("Successfully synced commands.")
+        except Exception as e:
+            print(e)
+
+        if not IS_DEV:
+            update_content_loop.start()
 
     async def custom_event_handler(self):
         while True:
@@ -65,38 +83,21 @@ async def update_content_loop():
 
 @bot.event
 async def on_ready():
-    try:
-        print(f"Signed in as { bot.user }")
-        await bot.tree.sync(guild=DEV_GUILD)
-        print("Successfully synced commands.")
-    except Exception as e:
-        print(e)
-
     print(f"Currently in {len(bot.guilds)} servers:")
     for server in bot.guilds:
         print("Server name:", server.name, ", owner:", server.owner.name, "num of members:", server.member_count)
 
-    if not IS_DEV:
-        update_content_loop.start()
-
 
 async def feed_autocomplete(interaction: discord.Interaction, current: str) -> list[discord.app_commands.Choice[str]]:
     current = current.rstrip()
-    print(current.rsplit(" ", 1))
     words = current.rsplit(" ", 1)
     before_last_word = "" if len(words) == 1 else words[0]
     last_word = words[-1]
-    print(before_last_word)
-    choices = [
-        " ".join([before_last_word, query_option]).lstrip()
-        for query_option in QUERY_OPTIONS
-        if query_option.startswith(last_word)
-    ]
-    print(choices)
-    return [discord.app_commands.Choice(name=choice, value=choice) for choice in choices][:25]
+    choices = QUERY_OPTIONS.starts_with(last_word)[:10]
+    return [discord.app_commands.Choice(name=before_last_word + ' ' + choice, value=before_last_word + ' ' + choice) for choice in choices]
 
 
-@bot.tree.command(name="feed", description="Get kpop content using idol or group name.", guilds=[DEV_GUILD])
+@bot.tree.command(name="feed", description="Get kpop content using idol or group name.")
 @discord.app_commands.describe(query="Idols and groups you want to include. Use `r` or `random` for random idol.")
 @discord.app_commands.autocomplete(query=feed_autocomplete)
 async def feed(interaction: discord.Interaction, query: str | None = None):
