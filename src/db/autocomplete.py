@@ -1,5 +1,4 @@
 import psycopg
-from src.db.guild_settings import get_min_age
 
 from . import CONN_DICT
 

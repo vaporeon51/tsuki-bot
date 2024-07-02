@@ -79,6 +79,7 @@ async def on_ready():
     if not IS_DEV:
         update_content_loop.start()
 
+
 async def feed_autocomplete(interaction: discord.Interaction, current: str) -> list[discord.app_commands.Choice[str]]:
     current = current.rstrip()
     print(current.rsplit(" ", 1))
@@ -86,13 +87,14 @@ async def feed_autocomplete(interaction: discord.Interaction, current: str) -> l
     before_last_word = "" if len(words) == 1 else words[0]
     last_word = words[-1]
     print(before_last_word)
-    choices = [" ".join([before_last_word, query_option]).lstrip()
-               for query_option in QUERY_OPTIONS if query_option.startswith(last_word)
-            ]
+    choices = [
+        " ".join([before_last_word, query_option]).lstrip()
+        for query_option in QUERY_OPTIONS
+        if query_option.startswith(last_word)
+    ]
     print(choices)
-    return [discord.app_commands.Choice(name=choice, value=choice)
-            for choice in choices
-        ][:25]
+    return [discord.app_commands.Choice(name=choice, value=choice) for choice in choices][:25]
+
 
 @bot.tree.command(name="feed", description="Get kpop content using idol or group name.", guilds=[DEV_GUILD])
 @discord.app_commands.describe(query="Idols and groups you want to include. Use `r` or `random` for random idol.")
