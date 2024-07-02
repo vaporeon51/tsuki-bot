@@ -50,7 +50,6 @@ class TsukiBot(commands.Bot):
             print(f"Signed in as { bot.user }")
             if IS_DEV:
                 bot.tree.copy_global_to(guild=DEV_GUILD)
-                bot.tree.fallback_to_global = False
                 if DEV_GUILD is not None:
                     print(DEV_GUILD.id)
                     synced = await bot.tree.sync(guild=DEV_GUILD)
