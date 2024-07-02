@@ -29,7 +29,7 @@ for outer_list in get_all_idols_and_groups():
         for string in inner_tuple:
             QUERY_OPTIONS.insert(string)
 
-if not IS_DEV:
+if IS_DEV:
     DEV_GUILD = discord.Object(id='1251704246584479857')
 
 
@@ -48,12 +48,17 @@ class TsukiBot(commands.Bot):
 
         try:
             print(f"Signed in as { bot.user }")
-            if not IS_DEV:
+            if IS_DEV:
                 bot.tree.copy_global_to(guild=DEV_GUILD)
-                await bot.tree.sync(guild=DEV_GUILD)
+                bot.tree.fallback_to_global = False
+                if DEV_GUILD is not None:
+                    print(DEV_GUILD.id)
+                    synced = await bot.tree.sync(guild=DEV_GUILD)
+                else:
+                    os.abort()
             else:
-                await bot.tree.sync()
-                print("Successfully synced commands.")
+                synced = await bot.tree.sync()
+            print(f"Successfully synced commands.\n {synced}")
         except Exception as e:
             print(e)
 
