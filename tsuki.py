@@ -165,7 +165,7 @@ async def feed(interaction: discord.Interaction, query: str | None = None, num_i
     for role_id, url in role_ids_and_urls:
         await asyncio.shield(perform_autofeed_critical_operations(message, url, role_id, tasks))
         if url != role_ids_and_urls[-1][1]:
-            await asyncio.sleep(0.1)
+            await asyncio.sleep(4)
 
     await asyncio.shield(asyncio.gather(*tasks))
     add_stat_count("latest")
