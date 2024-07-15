@@ -1,6 +1,9 @@
+import io
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from urllib.parse import urlparse
 
+import discord
 import requests
 from discord.ext import commands
 
@@ -26,6 +29,21 @@ def get_latest_posts() -> list[dict]:
     return resp.json()
 
 
+def get_image_files(urls: list[str]) -> list[discord.File]:
+    """Download reddit images and turn them into discord file attachments."""
+    results = []
+    for url in urls:
+        response = requests.get(url)
+        if response.status_code == 200:
+            image_data = io.BytesIO(response.content)
+            parsed_url = urlparse(url)
+            filename = parsed_url.path.split("/")[-1]
+            results.append(discord.File(fp=image_data, filename=filename))
+        else:
+            print(f"Failed to get url: {url}. Response: {response.json()}")
+    return results
+
+
 def parse_post(json_obj: dict) -> RedditPost:
     """Parse a single reddit post."""
     data = json_obj["data"]
@@ -44,7 +62,7 @@ def parse_post(json_obj: dict) -> RedditPost:
     )
 
 
-async def update_feeds(bot: commands.Bot, lookback_secs: int) -> None:
+async def update_reddit_feeds(bot: commands.Bot, lookback_secs: int) -> None:
     """Main routine for scanning new kpopfap reddit posts and sending updates."""
 
     print("Updating reddit feeds...")
@@ -71,7 +89,10 @@ async def update_feeds(bot: commands.Bot, lookback_secs: int) -> None:
         if bot.get_guild(guild_id):
             if channel := bot.get_channel(channel_id):
                 for post in posts:
-                    await channel.send(f"**{post.title}** posted to r/kpopfap")
-                    for url in post.media_urls:
-                        await channel.send(url)
+                    if post.is_gallery:
+                        images = get_image_files(post.media_urls)
+                        await channel.send(f"[r/kpopfap] **{post.title}**", files=images)
+                    else:
+                        await channel.send(f"[r/kpopfap] **{post.title}**")
+                        await channel.send(post.media_urls[0])
     print(f"Update complete with {len(posts)} posts.")

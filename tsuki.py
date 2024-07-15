@@ -27,7 +27,7 @@ from src.db.reddit_feeds import set_channel, unset_feed
 from src.db.stats import add_stat_count
 from src.db.utils import get_closest_roles, get_random_link_for_each_role, get_random_roles, update_given_emote_counts
 from src.reaction.gather import gather_reactions
-from src.reddit_feeds import update_feeds
+from src.reddit_feeds import update_reddit_feeds
 
 TOKEN = os.environ.get("TOKEN")
 
@@ -68,7 +68,7 @@ async def update_content_loop():
 
 @tasks.loop(seconds=REDDIT_FEED_WINDOW)
 async def update_reddit_feeds_loop():
-    await update_feeds(bot=bot, lookback_secs=REDDIT_FEED_WINDOW)
+    await update_reddit_feeds(bot=bot, lookback_secs=REDDIT_FEED_WINDOW)
 
 
 @bot.event
