@@ -262,12 +262,12 @@ class RedditFeed(discord.app_commands.Group):
         try:
             assert interaction.guild_id is not None
             set_channel(interaction.guild_id, channel.id)
-            interaction.response.send_message(
+            await interaction.response.send_message(
                 f"Channel `{channel.name}` is set to recieve updates from r/kpopfap.", ephemeral=True
             )
         except Exception as e:
             print(e)
-            interaction.response.send_message(f"Failed to set channel: {e}", ephemeral=True)
+            await interaction.response.send_message(f"Failed to set channel: {e}", ephemeral=True)
         add_stat_count("reddit_set_channel")
 
     @discord.app_commands.command(name="unset_feed", description="Unset the reddit feed for this server.")
@@ -275,10 +275,10 @@ class RedditFeed(discord.app_commands.Group):
         try:
             assert interaction.guild_id is not None
             unset_feed(interaction.guild_id)
-            interaction.response.send_message("Unset reddit feed for this server.", ephemeral=True)
+            await interaction.response.send_message("Unset reddit feed for this server.", ephemeral=True)
         except Exception as e:
             print(e)
-            interaction.response.send_message(f"Failed to set channel: {e}", ephemeral=True)
+            await interaction.response.send_message(f"Failed to set channel: {e}", ephemeral=True)
         add_stat_count("reddit_unset_feed")
 
 
