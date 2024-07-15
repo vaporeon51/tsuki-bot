@@ -20,3 +20,6 @@ RECENTLY_SENT_QUEUE_SIZE = 10
 
 # Size of cache for guild settings
 GUILD_SETTINGS_CACHE_SIZE = 100
+
+# Window seconds for scanning new posts
+REDDIT_FEED_WINDOW = 10 * 60

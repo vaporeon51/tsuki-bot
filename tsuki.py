@@ -13,12 +13,21 @@ load_dotenv(WEB_APP_PATH.joinpath(".env").as_posix())
 IS_DEV = os.environ.get("IS_DEV", "false") == "true"
 
 # Local imports after dotenv to ensure environment variables are available
-from src.config.constants import REACT_WAIT_SEC, REPORT_EMOTE, TSUKI_HARAM_HUG, TSUKI_NOM, UPVOTE_EMOTE
+from src.config.constants import (
+    REACT_WAIT_SEC,
+    REDDIT_FEED_WINDOW,
+    REPORT_EMOTE,
+    TSUKI_HARAM_HUG,
+    TSUKI_NOM,
+    UPVOTE_EMOTE,
+)
 from src.content_update import run_content_links_update
 from src.db.guild_settings import get_min_age, set_min_age
+from src.db.reddit_feeds import set_channel, unset_feed
 from src.db.stats import add_stat_count
 from src.db.utils import get_closest_roles, get_random_link_for_each_role, get_random_roles, update_given_emote_counts
 from src.reaction.gather import gather_reactions
+from src.reddit_feeds import update_feeds
 
 TOKEN = os.environ.get("TOKEN")
 
@@ -34,6 +43,7 @@ class TsukiBot(commands.Bot):
 
     async def setup_hook(self):
         self.tree.add_command(Admin())
+        self.tree.add_command(RedditFeed())
         asyncio.create_task(self.custom_event_handler())
 
     async def custom_event_handler(self):
@@ -56,6 +66,11 @@ async def update_content_loop():
     await run_content_links_update()
 
 
+@tasks.loop(seconds=REDDIT_FEED_WINDOW)
+async def update_reddit_feeds():
+    await update_feeds(bot=bot, lookback_secs=REDDIT_FEED_WINDOW)
+
+
 @bot.event
 async def on_ready():
     try:
@@ -71,6 +86,7 @@ async def on_ready():
 
     if not IS_DEV:
         update_content_loop.start()
+        update_reddit_feeds.start()
 
 
 @bot.tree.command(name="feed", description="Get kpop content using idol or group name.")
@@ -228,6 +244,41 @@ async def perform_autofeed_critical_operations(
 
     reaction_gathering_task = asyncio.create_task(gather_reactions(message, url, role_id))
     tasks.append(reaction_gathering_task)
+
+
+@discord.app_commands.default_permissions(manage_messages=True)
+@discord.app_commands.guild_only()
+class RedditFeed(discord.app_commands.Group):
+    def __init__(self):
+        super().__init__(name="reddit_feed", description="Commands for configuring kpopfap reddit feed.")
+        return
+
+    @discord.app_commands.command(
+        name="set_channel",
+        description="Set a channel to receive updates from r/kpopfap. Only one channel per server can recieve feed.",
+    )
+    @discord.app_commands.describe(channel="Channel to receive updates from r/kpopfap")
+    async def set_channel(self, interaction: discord.Interaction, channel: discord.TextChannel):
+        try:
+            assert interaction.guild_id is not None
+            set_channel(interaction.guild_id, channel.id)
+            interaction.response.send_message(
+                f"Channel `{channel.name}` is set to recieve updates from r/kpopfap.", ephemeral=True
+            )
+        except Exception as e:
+            print(e)
+            interaction.response.send_message(f"Failed to set channel: {e}", ephemeral=True)
+        add_stat_count("reddit_set_channel")
+
+    @discord.app_commands.command(name="unset_feed", description="Unset the reddit feed for this server.")
+    async def unset_feed(self, interaction: discord.Interaction):
+        try:
+            assert interaction.guild_id is not None
+            unset_feed(interaction.guild_id)
+        except Exception as e:
+            print(e)
+            interaction.response.send_message(f"Failed to set channel: {e}", ephemeral=True)
+        add_stat_count("reddit_unset_feed")
 
 
 @discord.app_commands.default_permissions(manage_guild=True)
