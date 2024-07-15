@@ -7,6 +7,7 @@ import discord
 import requests
 from discord.ext import commands
 
+from src.config.constants import TSUKI_CUTE
 from src.db.reddit_feeds import get_feed_configs
 
 
@@ -55,7 +56,7 @@ def parse_post(json_obj: dict) -> RedditPost:
         is_gallery = False
         media_urls = [data["url"]]
     return RedditPost(
-        title=data["title"],
+        title=data["title"].replace("&amp;", "&"),
         created_utc=data["created_utc"],
         is_gallery=is_gallery,
         media_urls=media_urls,
@@ -82,17 +83,18 @@ async def update_reddit_feeds(bot: commands.Bot, lookback_secs: int) -> None:
         post = parse_post(entry)
         if curr_time - post.created_utc < lookback_secs:
             posts.append(post)
-    posts = sorted(posts, key=lambda post: post.created_utc, reverse=True)
+    posts = sorted(posts, key=lambda post: post.created_utc)
 
     # Send those posts
     for guild_id, channel_id in feed_configs:
         if bot.get_guild(guild_id):
             if channel := bot.get_channel(channel_id):
                 for post in posts:
+                    text = f"[r/kpopfap] **{post.title}** {TSUKI_CUTE}"
                     if post.is_gallery:
                         images = get_image_files(post.media_urls)
-                        await channel.send(f"[r/kpopfap] **{post.title}**", files=images)
+                        await channel.send(text, files=images)
                     else:
-                        await channel.send(f"[r/kpopfap] **{post.title}**")
+                        await channel.send(text)
                         await channel.send(post.media_urls[0])
     print(f"Update complete with {len(posts)} posts.")
