@@ -17,7 +17,12 @@ class RedditPost:
 
 def get_latest_posts() -> list[dict]:
     """Get a latest posts from r/kpopfap."""
-    resp = requests.get("http://www.reddit.com/r/kpopfap/new.json?sort=new")
+
+    # Use header to avoid very aggressive 429 rate limiting
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3"
+    }
+    resp = requests.get("http://www.reddit.com/r/kpopfap/new.json?sort=new", headers=headers)
     return resp.json()
 
 
@@ -69,4 +74,4 @@ async def update_feeds(bot: commands.Bot, lookback_secs: int) -> None:
                     await channel.send(f"**{post.title}** posted to r/kpopfap")
                     for url in post.media_urls:
                         await channel.send(url)
-    print("Update complete.")
+    print(f"Update complete with {len(posts)} posts.")
