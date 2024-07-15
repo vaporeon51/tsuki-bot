@@ -42,6 +42,7 @@ def parse_post(json_obj: dict) -> RedditPost:
 async def update_feeds(bot: commands.Bot, lookback_secs: int) -> None:
     """Main routine for scanning new kpopfap reddit posts and sending updates."""
 
+    print("Updating reddit feeds...")
     feed_configs = get_feed_configs()
     response = get_latest_posts()
 
@@ -68,3 +69,4 @@ async def update_feeds(bot: commands.Bot, lookback_secs: int) -> None:
                     await channel.send(f"**{post.title}** posted to r/kpopfap")
                     for url in post.media_urls:
                         await channel.send(url)
+    print("Update complete.")

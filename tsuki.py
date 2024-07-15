@@ -275,6 +275,7 @@ class RedditFeed(discord.app_commands.Group):
         try:
             assert interaction.guild_id is not None
             unset_feed(interaction.guild_id)
+            interaction.response.send_message("Unset reddit feed for this server.", ephemeral=True)
         except Exception as e:
             print(e)
             interaction.response.send_message(f"Failed to set channel: {e}", ephemeral=True)
