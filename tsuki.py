@@ -67,7 +67,7 @@ async def update_content_loop():
 
 
 @tasks.loop(seconds=REDDIT_FEED_WINDOW)
-async def update_reddit_feeds():
+async def update_reddit_feeds_loop():
     await update_feeds(bot=bot, lookback_secs=REDDIT_FEED_WINDOW)
 
 
@@ -86,7 +86,7 @@ async def on_ready():
 
     if not IS_DEV:
         update_content_loop.start()
-        update_reddit_feeds.start()
+        update_reddit_feeds_loop.start()
 
 
 @bot.tree.command(name="feed", description="Get kpop content using idol or group name.")
