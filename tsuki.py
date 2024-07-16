@@ -25,7 +25,13 @@ from src.content_update import run_content_links_update
 from src.db.guild_settings import get_min_age, set_min_age
 from src.db.reddit_feeds import set_channel, unset_feed
 from src.db.stats import add_stat_count
-from src.db.utils import get_closest_roles, get_random_link_for_each_role, get_random_roles, update_given_emote_counts
+from src.db.utils import (
+    get_closest_roles,
+    get_latest_links_for_roles,
+    get_random_link_for_each_role,
+    get_random_roles,
+    update_given_emote_counts,
+)
 from src.reaction.gather import gather_reactions
 from src.reddit_feeds import update_reddit_feeds
 
@@ -61,7 +67,7 @@ class TsukiBot(commands.Bot):
 bot = TsukiBot()
 
 
-@tasks.loop(seconds=60 * 60 * 24)
+@tasks.loop(seconds=60 * 60 * 12)
 async def update_content_loop():
     await run_content_links_update()
 
@@ -89,7 +95,7 @@ async def on_ready():
         update_reddit_feeds_loop.start()
 
 
-@bot.tree.command(name="feed", description="Get kpop content using idol or group name.")
+@bot.tree.command(name="feed", description="Get random kpop content using idol or group name.")
 @discord.app_commands.describe(query="Idols and groups you want to include. Use `r` or `random` for random idol.")
 async def feed(interaction: discord.Interaction, query: str | None = None):
 
@@ -131,6 +137,54 @@ async def feed(interaction: discord.Interaction, query: str | None = None):
     # Update the table based on feedback
     count_by_emote = {emote.emoji: emote.count for emote in sent_message.reactions}
     update_given_emote_counts(role_ids_and_urls[0][0], role_ids_and_urls[0][1], count_by_emote)
+
+
+@bot.tree.command(name="latest", description="Get latest kpop content using idol or group name.")
+@discord.app_commands.describe(
+    query="Idols and groups you want to include. Use `a` or `all` for all idols.",
+    num_images="Number of images to display. Defaults to 5. Max of 20.",
+    skip="Number of images to skip from the beginning. Defaults to 0.",
+)
+async def feed(interaction: discord.Interaction, query: str | None = None, num_images: int = 5, skip: int = 0):
+
+    if num_images > 20:
+        await interaction.response.send_message("Cannot send more than 20 links at a time.", ephemeral=True)
+        return
+
+    min_age = get_min_age(interaction.guild_id)
+    if query in [None, "a", "all"]:
+        role_ids_and_urls = get_latest_links_for_roles(num_links=num_images, skip=skip, min_age=min_age)
+    else:
+        role_ids = get_closest_roles(query, min_age, count=num_images)
+        if not role_ids:
+            text = f"Could not find a role for `{query if query else 'random'}`. This message will disappear in 30s."
+            print(text)
+            await interaction.response.send_message(text, delete_after=30)
+            return
+        role_ids_and_urls = get_latest_links_for_roles(
+            num_links=num_images, skip=skip, min_age=min_age, role_ids=role_ids
+        )
+
+    if not role_ids_and_urls:
+        await interaction.response.send_message("Could not find any content with these inputs.", ephemeral=True)
+        return
+
+    text = f"Fetched latest `{len(role_ids_and_urls)}` images of `{query if query else 'all'}` after skipping first `{skip}` {TSUKI_NOM}"
+    try:
+        await interaction.response.send_message(content=text)
+    except Exception as e:
+        print(e)
+        return
+
+    message = await interaction.original_response()
+    tasks: list[asyncio.Task] = []
+    for role_id, url in role_ids_and_urls:
+        await asyncio.shield(perform_autofeed_critical_operations(message, url, role_id, tasks))
+        if url != role_ids_and_urls[-1][1]:
+            await asyncio.sleep(4)
+
+    await asyncio.shield(asyncio.gather(*tasks))
+    add_stat_count("latest")
 
 
 @bot.tree.command(
