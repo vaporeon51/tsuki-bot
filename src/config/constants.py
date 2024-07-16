@@ -23,4 +23,7 @@ RECENTLY_SENT_QUEUE_SIZE = 10
 GUILD_SETTINGS_CACHE_SIZE = 100
 
 # Window seconds for scanning new posts
-REDDIT_FEED_WINDOW = 600 * 60
+REDDIT_FEED_WINDOW = 5 * 60
+
+# Max attachments for reddit feed
+REDDIT_MAX_ATTACHMENTS = 5

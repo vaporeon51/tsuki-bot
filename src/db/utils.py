@@ -105,7 +105,7 @@ def get_latest_links_for_roles(
                 ordered_urls AS (
                     SELECT bday.role_id, cl.url
                     FROM bday
-                    JOIN content_links cl 
+                    JOIN content_links cl
                     ON bday.role_id = cl.role_id
                     WHERE cl.num_reports < %s
                     AND cl.uploaded_date > bday.birthday + %s::INTERVAL

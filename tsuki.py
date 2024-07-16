@@ -145,7 +145,7 @@ async def feed(interaction: discord.Interaction, query: str | None = None):
     num_images="Number of images to display. Defaults to 5. Max of 20.",
     skip="Number of images to skip from the beginning. Defaults to 0.",
 )
-async def feed(interaction: discord.Interaction, query: str | None = None, num_images: int = 5, skip: int = 0):
+async def latest(interaction: discord.Interaction, query: str | None = None, num_images: int = 5, skip: int = 0):
 
     if num_images > 20:
         await interaction.response.send_message("Cannot send more than 20 links at a time.", ephemeral=True)

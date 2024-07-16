@@ -1,14 +1,20 @@
 import io
+import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from urllib.parse import urlparse
 
+import asyncpraw
+import asyncpraw.models
 import discord
 import requests
 from discord.ext import commands
 
-from src.config.constants import TSUKI_CUTE
+from src.config.constants import REDDIT_MAX_ATTACHMENTS, TSUKI_CUTE
 from src.db.reddit_feeds import get_feed_configs
+
+REDDIT_CLIENT_ID = os.environ["REDDIT_CLIENT_ID"]
+REDDIT_SECRET = os.environ["REDDIT_SECRET"]
 
 
 @dataclass
@@ -19,21 +25,20 @@ class RedditPost:
     media_urls: list[str]
 
 
-def get_latest_posts() -> list[dict]:
-    """Get a latest posts from r/kpopfap."""
-
-    # Use header to avoid very aggressive 429 rate limiting
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3"
-    }
-    resp = requests.get("https://www.reddit.com/r/kpopfap/new.json?sort=new", headers=headers, timeout=5)
-    return resp.json()
+async def get_latest_posts() -> list[asyncpraw.models.Submission]:
+    """Get latest posts from kpopfap subreddit."""
+    reddit = asyncpraw.Reddit(client_id=REDDIT_CLIENT_ID, client_secret=REDDIT_SECRET, user_agent="tsuki-bot")
+    subreddit = await reddit.subreddit("kpopfap")
+    posts = []
+    async for post in subreddit.new(limit=10):
+        posts.append(post)
+    return posts
 
 
 def get_image_files(urls: list[str]) -> list[discord.File]:
     """Download reddit images and turn them into discord file attachments."""
     results = []
-    for url in urls:
+    for url in urls[:REDDIT_MAX_ATTACHMENTS]:
         response = requests.get(url)
         if response.status_code == 200:
             image_data = io.BytesIO(response.content)
@@ -45,19 +50,18 @@ def get_image_files(urls: list[str]) -> list[discord.File]:
     return results
 
 
-def parse_post(json_obj: dict) -> RedditPost:
+def parse_post(post: asyncpraw.models.Submission) -> RedditPost:
     """Parse a single reddit post."""
-    data = json_obj["data"]
-    if "gallery" in data["url"]:
+    if "gallery" in post.url:
         is_gallery = True
         # We have to extract the proper CDN urls from each image
-        media_urls = [image["s"]["u"].replace("&amp;", "&") for image in data["media_metadata"].values()]
+        media_urls = [image["s"]["u"] for image in post.__dict__["media_metadata"].values()]
     else:
         is_gallery = False
-        media_urls = [data["url"]]
+        media_urls = [post.url]
     return RedditPost(
-        title=data["title"].replace("&amp;", "&"),
-        created_utc=data["created_utc"],
+        title=post.title,
+        created_utc=post.created_utc,
         is_gallery=is_gallery,
         media_urls=media_urls,
     )
@@ -67,32 +71,23 @@ async def update_reddit_feeds(bot: commands.Bot, lookback_secs: int) -> None:
     """Main routine for scanning new kpopfap reddit posts and sending updates."""
 
     print("Updating reddit feeds...")
-    feed_configs = get_feed_configs()
-    print("Got configs", feed_configs)
-    response = get_latest_posts()
-    print("Got responses")
-
-    # Sometimes we hit rate limit
-    if "data" not in response:
-        print(f"No data from response: {response}")
-        return
-
     curr_time = datetime.now(timezone.utc).timestamp()
+    feed_configs = get_feed_configs()
+    posts = await get_latest_posts()
 
     # Get the posts that are in the lookback window
-    posts: list[RedditPost] = []
-    for entry in response["data"]["children"]:
-        post = parse_post(entry)
-        if curr_time - post.created_utc < lookback_secs:
-            posts.append(post)
-    posts = sorted(posts, key=lambda post: post.created_utc)
-    print("Filtered posts", posts)
+    parsed_posts: list[RedditPost] = []
+    for post in posts:
+        parsed_post = parse_post(post)
+        if curr_time - parsed_post.created_utc < lookback_secs:
+            parsed_posts.append(parsed_post)
+    parsed_posts = sorted(parsed_posts, key=lambda x: x.created_utc)
 
     # Send those posts
     for guild_id, channel_id in feed_configs:
         if bot.get_guild(guild_id):
             if channel := bot.get_channel(channel_id):
-                for post in posts:
+                for post in parsed_posts:
                     text = f"[r/kpopfap] **{post.title}** {TSUKI_CUTE}"
                     if post.is_gallery:
                         images = get_image_files(post.media_urls)
@@ -100,4 +95,4 @@ async def update_reddit_feeds(bot: commands.Bot, lookback_secs: int) -> None:
                     else:
                         await channel.send(text)
                         await channel.send(post.media_urls[0])
-    print(f"Update complete with {len(posts)} posts.")
+    print(f"Update complete with {len(parsed_posts)} posts.")
