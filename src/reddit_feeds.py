@@ -68,7 +68,9 @@ async def update_reddit_feeds(bot: commands.Bot, lookback_secs: int) -> None:
 
     print("Updating reddit feeds...")
     feed_configs = get_feed_configs()
+    print("Got configs", feed_configs)
     response = get_latest_posts()
+    print("Got responses")
 
     # Sometimes we hit rate limit
     if "data" not in response:
@@ -84,6 +86,7 @@ async def update_reddit_feeds(bot: commands.Bot, lookback_secs: int) -> None:
         if curr_time - post.created_utc < lookback_secs:
             posts.append(post)
     posts = sorted(posts, key=lambda post: post.created_utc)
+    print("Filtered posts", posts)
 
     # Send those posts
     for guild_id, channel_id in feed_configs:
