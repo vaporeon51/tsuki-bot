@@ -32,6 +32,7 @@ async def get_latest_posts() -> list[asyncpraw.models.Submission]:
     posts = []
     async for post in subreddit.new(limit=10):
         posts.append(post)
+    await reddit.close()
     return posts
 
 
