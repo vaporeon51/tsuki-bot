@@ -73,7 +73,12 @@ async def update_reddit_feeds(bot: commands.Bot, lookback_secs: int) -> None:
     print("Updating reddit feeds...")
     curr_time = datetime.now(timezone.utc).timestamp()
     feed_configs = get_feed_configs()
-    posts = await get_latest_posts()
+
+    try:
+        posts = await get_latest_posts()
+    except Exception as e:
+        print(f"Error with fetching latest posts: {str(e)}")
+        return
 
     # Get the posts that are in the lookback window
     parsed_posts: list[RedditPost] = []
