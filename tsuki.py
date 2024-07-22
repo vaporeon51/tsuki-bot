@@ -69,12 +69,18 @@ bot = TsukiBot()
 
 @tasks.loop(seconds=60 * 60 * 12)
 async def update_content_loop():
-    await run_content_links_update()
+    try:
+        await run_content_links_update()
+    except Exception as e:
+        print(f"Error with content update:\n{str(e)}")
 
 
 @tasks.loop(seconds=REDDIT_FEED_WINDOW)
 async def update_reddit_feeds_loop():
-    await update_reddit_feeds(bot=bot, lookback_secs=REDDIT_FEED_WINDOW)
+    try:
+        await update_reddit_feeds(bot=bot, lookback_secs=REDDIT_FEED_WINDOW)
+    except Exception as e:
+        print(f"Error with reddit update:\n{str(e)}")
 
 
 @bot.event
