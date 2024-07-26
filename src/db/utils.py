@@ -216,8 +216,22 @@ def update_given_emote_counts(role_id: str, url: str, count_by_emoji: dict[str, 
                     SET num_upvotes = num_upvotes + %s,
                         num_reports = num_reports + %s
                     WHERE url = %s
-                    AND role_id = %s
+                    AND role_id = %s;
                     """,
                     (upvote_count, report_count, url, role_id),
                 )
         print(f"Updated feedback for {role_id} {url}: {(upvote_count, report_count)}")
+
+
+def report_broken_link_url(url: str) -> None:
+    """Given a broken URL, remove it from database by increasing its report count by threshold."""
+    with psycopg.connect(**CONN_DICT) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE content_links
+                SET num_reports = num_reports + %s
+                WHERE url = %s;
+                """,
+                (REPORT_THRESHOLD, url),
+            )

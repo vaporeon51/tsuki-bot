@@ -1,6 +1,8 @@
 from collections import OrderedDict
 from typing import Any, Hashable
 
+from discord import Message
+
 
 class LRUCache:
     def __init__(self, capacity: int):
@@ -23,3 +25,15 @@ class LRUCache:
     def invalidate(self, key: Hashable) -> None:
         if key in self.cache:
             del self.cache[key]
+
+
+def is_message_broken_link(message: Message) -> bool:
+    """Determines if the message is a broken imgur link."""
+
+    if not message.embeds:
+        return True
+
+    if message.embeds[0].type == "article":
+        return True
+
+    return False

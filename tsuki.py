@@ -13,25 +13,12 @@ load_dotenv(WEB_APP_PATH.joinpath(".env").as_posix())
 IS_DEV = os.environ.get("IS_DEV", "false") == "true"
 
 # Local imports after dotenv to ensure environment variables are available
-from src.config.constants import (
-    REACT_WAIT_SEC,
-    REDDIT_FEED_WINDOW,
-    REPORT_EMOTE,
-    TSUKI_HARAM_HUG,
-    TSUKI_NOM,
-    UPVOTE_EMOTE,
-)
+from src.config.constants import REDDIT_FEED_WINDOW, REPORT_EMOTE, TSUKI_HARAM_HUG, TSUKI_NOM, UPVOTE_EMOTE
 from src.content_update import run_content_links_update
 from src.db.guild_settings import get_min_age, set_min_age
 from src.db.reddit_feeds import set_channel, unset_feed
 from src.db.stats import add_stat_count
-from src.db.utils import (
-    get_closest_roles,
-    get_latest_links_for_roles,
-    get_random_link_for_each_role,
-    get_random_roles,
-    update_given_emote_counts,
-)
+from src.db.utils import get_closest_roles, get_latest_links_for_roles, get_random_link_for_each_role, get_random_roles
 from src.reaction.gather import gather_reactions
 from src.reddit_feeds import update_reddit_feeds
 
@@ -133,16 +120,11 @@ async def feed(interaction: discord.Interaction, query: str | None = None):
     for emote in emotes:
         await sent_message.add_reaction(emote)
 
-    # Wait for feedback to settle
-    add_stat_count("feed")
-    await asyncio.sleep(REACT_WAIT_SEC)
-
-    # Fetch the message again to count reactions
+    # Count emotes and update database
     sent_message = await interaction.channel.fetch_message(sent_message.id)
+    await gather_reactions(message=sent_message, url=role_ids_and_urls[0][1], role_id=role_ids_and_urls[0][0])
 
-    # Update the table based on feedback
-    count_by_emote = {emote.emoji: emote.count for emote in sent_message.reactions}
-    update_given_emote_counts(role_ids_and_urls[0][0], role_ids_and_urls[0][1], count_by_emote)
+    add_stat_count("feed")
 
 
 @bot.tree.command(name="latest", description="Get latest kpop content using idol or group name.")
