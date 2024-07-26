@@ -6,6 +6,9 @@ SQLAlchemy
 psycopg[binary,pool]
 requests
 
+# Reddit
+asyncpraw
+
 # Jupyter
 ipykernel
 jupyter_black
