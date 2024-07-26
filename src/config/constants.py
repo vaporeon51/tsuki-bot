@@ -5,7 +5,7 @@ TSUKI_HARAM_HUG = "<a:tsukiharamhug:1253794454213492927>"
 TSUKI_CUTE = "<:tsukicute2:1262556066961686639>"
 
 # Number of seconds to wait before updating db based on reactions
-REACT_WAIT_SEC = 5
+REACT_WAIT_SEC = 3 * 60
 
 # Number of reports to eliminate a role + link combination from being shown
 REPORT_THRESHOLD = 5
