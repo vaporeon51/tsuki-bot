@@ -3,15 +3,14 @@ import psycopg
 from . import CONN_DICT
 
 
-def set_channel(guild_id: int, channel_id: int, subreddit: str) -> None:
+def set_reddit_feed(guild_id: int, channel_id: int, subreddit: str) -> None:
     with psycopg.connect(**CONN_DICT) as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """
                 INSERT INTO reddit_feeds (guild_id, channel_id, subreddit)
                 VALUES (%s, %s, %s)
-                ON CONFLICT (guild_id)
-                DO UPDATE SET channel_id = EXCLUDED.channel_id;
+                ON CONFLICT (guild_id, channel_id, subreddit) DO NOTHING;
                 """,
                 (guild_id, channel_id, subreddit),
             )
@@ -33,7 +32,7 @@ def get_subscriptions(guild_id: int) -> list[tuple[int, str]]:
     return [(channel_id, subreddit) for _, subreddit, channel_id in results]
 
 
-def unset_feed(guild_id: int) -> None:
+def unset_feeds(guild_id: int) -> None:
     with psycopg.connect(**CONN_DICT) as conn:
         with conn.cursor() as cur:
             cur.execute(
