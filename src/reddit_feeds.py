@@ -25,10 +25,10 @@ class RedditPost:
     media_urls: list[str]
 
 
-async def get_latest_posts() -> list[asyncpraw.models.Submission]:
+async def get_latest_posts(subreddit: str) -> list[asyncpraw.models.Submission]:
     """Get latest posts from kpopfap subreddit."""
     reddit = asyncpraw.Reddit(client_id=REDDIT_CLIENT_ID, client_secret=REDDIT_SECRET, user_agent="tsuki-bot")
-    subreddit = await reddit.subreddit("kpopfap")
+    subreddit = await reddit.subreddit(subreddit)
     posts = []
     async for post in subreddit.new(limit=10):
         posts.append(post)
@@ -74,31 +74,42 @@ async def update_reddit_feeds(bot: commands.Bot, lookback_secs: int) -> None:
     print("Updating reddit feeds...")
     curr_time = datetime.now(timezone.utc).timestamp()
     feed_configs = get_feed_configs()
-
+    num_new_posts = {}
     try:
-        posts = await get_latest_posts()
+        all_subreddits = set(subreddit for _, _, subreddit in feed_configs)
+        posts_by_subreddit = {}
+
+        for subreddit in all_subreddits:
+            # Try to fetch from the subreddit
+            try:
+                posts = await get_latest_posts(subreddit)
+            except Exception as e:
+                print(f"Could not get posts from subreddit: {subreddit}. Error: {str(e)}")
+                posts = []
+
+            # Get the posts that are in the lookback window
+            parsed_posts: list[RedditPost] = []
+            for post in posts:
+                parsed_post = parse_post(post)
+                if curr_time - parsed_post.created_utc < lookback_secs:
+                    parsed_posts.append(parsed_post)
+            posts_by_subreddit[subreddit] = sorted(parsed_posts, key=lambda x: x.created_utc)
+            num_new_posts[subreddit] = len(parsed_posts)
+
     except Exception as e:
         print(f"Error with fetching latest posts: {str(e)}")
         return
 
-    # Get the posts that are in the lookback window
-    parsed_posts: list[RedditPost] = []
-    for post in posts:
-        parsed_post = parse_post(post)
-        if curr_time - parsed_post.created_utc < lookback_secs:
-            parsed_posts.append(parsed_post)
-    parsed_posts = sorted(parsed_posts, key=lambda x: x.created_utc)
-
     # Send those posts
-    for guild_id, channel_id in feed_configs:
+    for guild_id, channel_id, subreddit in feed_configs:
         if bot.get_guild(guild_id):
             if channel := bot.get_channel(channel_id):
-                for post in parsed_posts:
-                    text = f"[r/kpopfap] **{post.title}** {TSUKI_CUTE}"
+                for post in posts_by_subreddit.get(subreddit, []):
+                    text = f"[r/{subreddit}] **{post.title}** {TSUKI_CUTE}"
                     if post.is_gallery:
                         images = get_image_files(post.media_urls)
                         await channel.send(text, files=images)
                     else:
                         await channel.send(text)
                         await channel.send(post.media_urls[0])
-    print(f"Update complete with {len(parsed_posts)} posts.")
+    print(f"Update complete with {num_new_posts} posts.")
