@@ -16,7 +16,7 @@ IS_DEV = os.environ.get("IS_DEV", "false") == "true"
 from src.config.constants import REDDIT_FEED_WINDOW, REPORT_EMOTE, TSUKI_HARAM_HUG, TSUKI_NOM, UPVOTE_EMOTE
 from src.content_update import run_content_links_update
 from src.db.guild_settings import get_min_age, set_min_age
-from src.db.reddit_feeds import set_channel, unset_feed
+from src.db.reddit_feeds import get_subscriptions, set_reddit_feed, unset_feeds
 from src.db.stats import add_stat_count
 from src.db.utils import get_closest_roles, get_latest_links_for_roles, get_random_link_for_each_role, get_random_roles
 from src.reaction.gather import gather_reactions
@@ -292,36 +292,55 @@ async def perform_autofeed_critical_operations(
 @discord.app_commands.guild_only()
 class RedditFeed(discord.app_commands.Group):
     def __init__(self):
-        super().__init__(name="reddit_feed", description="Commands for configuring kpopfap reddit feed.")
+        super().__init__(name="reddit_feed", description="Commands for configuring reddit feed.")
         return
 
     @discord.app_commands.command(
-        name="set_channel",
-        description="Set a channel to receive updates from r/kpopfap. Only one channel per server can recieve feed.",
+        name="set_feed",
+        description="Set a channel to receive updates from a subreddit.",
     )
-    @discord.app_commands.describe(channel="Channel to receive updates from r/kpopfap")
-    async def set_channel(self, interaction: discord.Interaction, channel: discord.TextChannel):
+    @discord.app_commands.describe(
+        channel="Channel to receive updates from reddit",
+        subreddit="Name of subreddit, defaults to `kpopfap`. Do not include `r/`.",
+    )
+    async def set_feed(
+        self, interaction: discord.Interaction, channel: discord.TextChannel, subreddit: str = "kpopfap"
+    ):
         try:
             assert interaction.guild_id is not None
-            set_channel(interaction.guild_id, channel.id)
+            set_reddit_feed(interaction.guild_id, channel.id, subreddit)
             await interaction.response.send_message(
-                f"Channel `{channel.name}` is set to recieve updates from r/kpopfap.", ephemeral=True
+                f"Channel `{channel.name}` is set to recieve updates from `r/{subreddit}`."
             )
         except Exception as e:
             print(e)
             await interaction.response.send_message(f"Failed to set channel: {e}", ephemeral=True)
-        add_stat_count("reddit_set_channel")
+        add_stat_count("reddit_set_feed")
 
-    @discord.app_commands.command(name="unset_feed", description="Unset the reddit feed for this server.")
-    async def unset_feed(self, interaction: discord.Interaction):
+    @discord.app_commands.command(name="list_feeds", description="List the existing subscriptions for this server.")
+    async def list_feeds(self, interaction: discord.Interaction):
         try:
             assert interaction.guild_id is not None
-            unset_feed(interaction.guild_id)
-            await interaction.response.send_message("Unset reddit feed for this server.", ephemeral=True)
+            subs = get_subscriptions(interaction.guild_id)
+            if not subs:
+                await interaction.response.send_message("No reddit feeds for this server.", ephemeral=True)
+            else:
+                await interaction.response.send_message(f"Subscriptions of channel and subreddit: `{str(subs)}`")
         except Exception as e:
             print(e)
-            await interaction.response.send_message(f"Failed to set channel: {e}", ephemeral=True)
-        add_stat_count("reddit_unset_feed")
+            await interaction.response.send_message(f"Failed to get server subscriptions: {e}", ephemeral=True)
+        add_stat_count("reddit_list_feeds")
+
+    @discord.app_commands.command(name="unset_feeds", description="Unset all reddit feeds for this server.")
+    async def unset_feeds(self, interaction: discord.Interaction):
+        try:
+            assert interaction.guild_id is not None
+            unset_feeds(interaction.guild_id)
+            await interaction.response.send_message("Unset all reddits feed for this server.")
+        except Exception as e:
+            print(e)
+            await interaction.response.send_message(f"Failed to unset feeds: {e}", ephemeral=True)
+        add_stat_count("reddit_unset_feeds")
 
 
 @discord.app_commands.default_permissions(manage_guild=True)
