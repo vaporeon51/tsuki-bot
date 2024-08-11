@@ -57,6 +57,10 @@ def parse_post(post: asyncpraw.models.Submission) -> RedditPost:
         is_gallery = True
         # We have to extract the proper CDN urls from each image
         media_urls = [image["s"]["u"] for image in post.__dict__["media_metadata"].values()]
+    elif "v.redd.it" in post.url:
+        # For uploaded videos (non-imgur)
+        is_gallery = True
+        media_urls = [post.__dict__["secure_media"]["reddit_video"]["fallback_url"]]
     else:
         is_gallery = False
         media_urls = [post.url]
