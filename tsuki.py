@@ -270,7 +270,7 @@ async def autofeed_command(interaction: discord.Interaction, query: str | None, 
     except asyncio.CancelledError:
         text.append("An admin has cancelled this autofeed session.")
     finally:
-        text.append(f"Thank you for choosing Fukotomi Diner {TSUKI_HARAM_HUG}")
+        text.append(f"Thank you for choosing Fukutomi Diner {TSUKI_HARAM_HUG}")
         await message.reply(" ".join(text))
         await asyncio.shield(asyncio.gather(*tasks))
 
