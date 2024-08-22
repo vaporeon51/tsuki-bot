@@ -56,7 +56,15 @@ def parse_post(post: asyncpraw.models.Submission) -> RedditPost:
     if "gallery" in post.url:
         is_gallery = True
         # We have to extract the proper CDN urls from each image
-        media_urls = [image["s"]["u"] for image in post.__dict__["media_metadata"].values()]
+        media_urls = []
+        for image in post.__dict__["media_metadata"].values():
+            source = image["s"]
+            if "u" in source:
+                media_urls.append(source["u"])
+            elif "gif" in source:
+                media_urls.append(source["gif"])
+            else:
+                raise ValueError(f"Can't find good keys in {post.url}.")
     elif "v.redd.it" in post.url:
         # For uploaded videos (non-imgur)
         is_gallery = True
@@ -94,7 +102,12 @@ async def update_reddit_feeds(bot: commands.Bot, lookback_secs: int) -> None:
             # Get the posts that are in the lookback window
             parsed_posts: list[RedditPost] = []
             for post in posts:
-                parsed_post = parse_post(post)
+                try:
+                    parsed_post = parse_post(post)
+                except Exception as e:
+                    print(f"Could not parse post:\n{str(e)}\n{post.__dict__}")
+                    continue
+
                 if curr_time - parsed_post.created_utc < lookback_secs:
                     parsed_posts.append(parsed_post)
             posts_by_subreddit[subreddit] = sorted(parsed_posts, key=lambda x: x.created_utc)
