@@ -10,7 +10,7 @@ import discord
 import requests
 from discord.ext import commands
 
-from src.config.constants import REDDIT_MAX_ATTACHMENTS, TSUKI_CUTE
+from src.config.constants import REDDIT_MAX_ATTACHMENTS
 from src.db.reddit_feeds import get_feed_configs
 
 REDDIT_CLIENT_ID = os.environ["REDDIT_CLIENT_ID"]
@@ -109,7 +109,7 @@ async def update_reddit_feeds(bot: commands.Bot, lookback_secs: int) -> None:
         if bot.get_guild(guild_id):
             if channel := bot.get_channel(channel_id):
                 for post in posts_by_subreddit.get(subreddit, []):
-                    text = f"[r/{subreddit}] **{post.title}** {TSUKI_CUTE}"
+                    text = f"[r/{subreddit}] **{post.title}**"
                     if post.is_gallery:
                         images = get_image_files(post.media_urls)
                         await channel.send(text, files=images)
