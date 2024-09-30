@@ -29,7 +29,9 @@ def process_message(message_json: dict, valid_roles: list[str], processed_date: 
     if not roles:
         return []
 
-    relevant_roles = [role for role in roles if role in valid_roles]
+    # TODO: filter out for valid roles once the roles table is being updated regularly
+    # relevant_roles = [role for role in roles if role in valid_roles]
+    relevant_roles = roles
     if not relevant_roles:
         return []
 
