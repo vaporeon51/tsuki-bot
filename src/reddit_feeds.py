@@ -105,7 +105,7 @@ async def update_reddit_feeds(bot: commands.Bot, lookback_secs: int) -> None:
                 try:
                     parsed_post = parse_post(post)
                 except Exception as e:
-                    print(f"Could not parse post:\n{str(e)}\n{post.__dict__}")
+                    print(f"Could not parse post {post.title} from subreddit {subreddit}. Error: {str(e)}")
                     continue
 
                 if curr_time - parsed_post.created_utc < lookback_secs:
