@@ -79,7 +79,10 @@ async def on_ready():
 
     print(f"Currently in {len(bot.guilds)} servers:")
     for server in bot.guilds:
-        print("Server name:", server.name, ", owner:", server.owner.name, "num of members:", server.member_count)
+        try:
+            print("Server name:", server.name, ", owner:", server.owner.name, "num of members:", server.member_count)
+        except Exception as e:
+            print("Could not get server info for:", server.name, str(e))
 
     if not IS_DEV:
         update_content_loop.start()
