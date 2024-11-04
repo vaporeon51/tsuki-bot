@@ -28,8 +28,6 @@ TOKEN = os.environ.get("TOKEN")
 class TsukiBot(commands.Bot):
     def __init__(self):
         intents = discord.Intents.default()
-        intents.members = True
-        intents.message_content = True
         super().__init__(intents=intents, command_prefix="['/tsuki', '/tk', '!']", help_command=None)
         self.custom_event_queue = asyncio.Queue()
         self.active_commands: dict[int, dict[str, list[asyncio.Task]]] = {}
