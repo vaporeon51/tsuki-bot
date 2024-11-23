@@ -76,9 +76,9 @@ def get_recent_messages(guild_id: int) -> list[tuple[int, int]]:
 
 def get_recent_birthdays() -> list[tuple[str, str, str]]:
     """
-    Fetch recent birthdays (month and day) that occurred in the past 1 day
-    from the `role_info` table. Returns a list of tuples with role_id,
-    member_name, and group_name.
+    Fetch recent birthdays (month and day) that occurred in the past 1 day,
+    for members who turned at least 19 years old in the current calendar year or earlier.
+    Returns a list of tuples with role_id, member_name, and group_name.
     """
     # Calculate today's and yesterday's month-day combinations
     now = datetime.now(timezone.utc)
@@ -88,6 +88,9 @@ def get_recent_birthdays() -> list[tuple[str, str, str]]:
     today_mm_dd = now.strftime("%m-%d")
     yesterday_mm_dd = yesterday.strftime("%m-%d")
 
+    # Calculate the cutoff year for age 19
+    cutoff_year = now.year - 19
+
     with psycopg.connect(**CONN_DICT) as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -95,9 +98,10 @@ def get_recent_birthdays() -> list[tuple[str, str, str]]:
                 SELECT role_id, member_name, group_name
                 FROM role_info
                 WHERE TO_CHAR(birthday, 'MM-DD') IN (%s, %s)
+                AND EXTRACT(YEAR FROM birthday) <= %s
                 AND member_name IS NOT NULL
                 AND member_name <> ''
                 """,
-                (yesterday_mm_dd, today_mm_dd),
+                (yesterday_mm_dd, today_mm_dd, cutoff_year),
             )
             return cur.fetchall()
