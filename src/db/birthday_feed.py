@@ -17,16 +17,14 @@ def set_birthday_feed(guild_id: int, channel_id: int) -> None:
             )
 
 
-def get_birthday_feeds(guild_id: int) -> list[int]:
+def get_birthday_feeds() -> list[int]:
     with psycopg.connect(**CONN_DICT) as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT channel_id
+                SELECT guild_id, channel_id
                 FROM birthday_feeds
-                WHERE guild_id = %s
-                """,
-                (guild_id,),
+                """
             )
             results = cur.fetchall()
     return results
@@ -57,19 +55,18 @@ def log_message(guild_id: int, channel_id: int, role_id: str) -> None:
             )
 
 
-def get_recent_messages(guild_id: int) -> list[tuple[int, int]]:
+def get_recent_messages() -> list[tuple[int, int]]:
     # Check the last 2 days for relevant posts
     date_cutoff = datetime.now(timezone.utc) - timedelta(days=2)
     with psycopg.connect(**CONN_DICT) as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT channel_id, role_id
+                SELECT guild_id, channel_id, role_id
                 FROM birthday_messages
-                WHERE guild_id = %s
-                AND post_datetime >= %s 
+                WHERE post_datetime >= %s 
                 """,
-                (guild_id, date_cutoff),
+                (date_cutoff),
             )
             return cur.fetchall()
 
