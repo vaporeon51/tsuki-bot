@@ -98,6 +98,7 @@ async def on_ready():
     if not IS_DEV:
         update_content_loop.start()
         update_reddit_feeds_loop.start()
+        update_birthday_feeds_loop.start()
 
 
 @bot.tree.command(name="feed", description="Get random kpop content using idol or group name.")

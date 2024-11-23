@@ -4,6 +4,7 @@ from src.db.birthday_feed import get_birthday_feeds, get_recent_birthdays, get_r
 
 
 async def update_birthday_feeds(bot: commands.Bot) -> None:
+    print("Starting birthday feeds...")
     # 1. Get all the birthday feeds (guild_id, channel_id)
     birthday_feeds = get_birthday_feeds()
 
@@ -44,3 +45,5 @@ async def update_birthday_feeds(bot: commands.Bot) -> None:
 
                 except Exception as e:
                     print(f"Failed to send message to guild {guild_id}, channel {channel_id}: {e}")
+
+    print("Completed birthday feeds.")
