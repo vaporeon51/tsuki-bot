@@ -36,6 +36,7 @@ class TsukiBot(commands.Bot):
 
     async def setup_hook(self):
         self.tree.add_command(Admin())
+        self.tree.add_command(BirthdayFeed())
         self.tree.add_command(RedditFeed())
         asyncio.create_task(self.custom_event_handler())
 
