@@ -17,7 +17,7 @@ def set_birthday_feed(guild_id: int, channel_id: int) -> None:
             )
 
 
-def get_birthday_feeds() -> list[int]:
+def get_birthday_feeds() -> tuple[int, int]:
     with psycopg.connect(**CONN_DICT) as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -66,7 +66,7 @@ def get_recent_messages() -> list[tuple[int, int]]:
                 FROM birthday_messages
                 WHERE post_datetime >= %s 
                 """,
-                (date_cutoff),
+                (date_cutoff,),
             )
             return cur.fetchall()
 
