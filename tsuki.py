@@ -359,7 +359,7 @@ class RedditFeed(discord.app_commands.Group):
 @discord.app_commands.guild_only()
 class BirthdayFeed(discord.app_commands.Group):
     def __init__(self):
-        super().__init__(name="reddit_feed", description="Commands for configuring birthday feed.")
+        super().__init__(name="birthday_feed", description="Commands for configuring birthday feed.")
         return
 
     @discord.app_commands.command(
