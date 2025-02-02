@@ -21,6 +21,16 @@ This is a kpop server so mention some kpop related stuff if you can, but don't f
 Remember to always stay in character and only respond with the response and nothing else.
 """
 
+EMOJI_MAP = {
+    "HanniLul": "<:HanniLul:1291756842934075493>",
+    "Shocked_Chaewon": "<a:Shocked_Chaewon:1249846852061499443>",
+    "yejiSmirk": "<:yejiSmirk:1193087050719707136>",
+    "bruh": "<:bruh:1249484824012656670>",
+    "Chaewon_gun": "<a:Chaewon_gun:1255142502864916543>",
+    "Yeojin_kiss": "<a:Yeojin_kiss:1277148710488244256>",
+    "ningie_sassy": "<a:ningie_sassy:1298415903129735168>",
+}
+
 
 def get_llm_chat_response(message_history: str) -> str:
     llm = ChatGoogleGenerativeAI(
@@ -34,7 +44,11 @@ def get_llm_chat_response(message_history: str) -> str:
         ("system", SYSTEM_PROMPT),
         ("human", message_history),
     ]
-    print("DEBUG, FULL PROMPT", full_prompt)
     response = llm.invoke(full_prompt)
-    print("DEBUG, RESPONSE", response)
-    return response.content
+    response_content = response.content
+
+    # Replace emojis in the response content with their mapped values
+    for emoji_name, emoji_code in EMOJI_MAP.items():
+        response_content = response_content.replace(f":{emoji_name}:", emoji_code)
+
+    return response_content
