@@ -65,7 +65,7 @@ def get_recent_messages() -> list[tuple[int, int]]:
                 """
                 SELECT guild_id, channel_id, role_id
                 FROM birthday_messages
-                WHERE post_datetime >= %s 
+                WHERE post_datetime >= %s
                 """,
                 (date_cutoff,),
             )

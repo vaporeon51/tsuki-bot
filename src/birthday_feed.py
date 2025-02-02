@@ -25,7 +25,7 @@ async def update_birthday_feeds(bot: commands.Bot) -> None:
             if (guild_id, channel_id, role_id) not in recent_messages_set:
                 # Format the birthday message
                 message = f"# 🎉 Happy Birthday, {member_name}! 🎂"
-                gif_url = get_random_link_for_each_role([role_id], "18 year")
+                gif_url = get_random_link_for_each_role([role_id], "18 year")[0][1]
 
                 try:
                     # 5. Send the message via Discord

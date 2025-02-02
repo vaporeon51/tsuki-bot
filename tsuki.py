@@ -83,7 +83,7 @@ async def update_birthday_feeds_loop():
 @bot.event
 async def on_ready():
     try:
-        print(f"Signed in as { bot.user }")
+        print(f"Signed in as {bot.user}")
         await bot.tree.sync()
         print("Successfully synced commands.")
     except Exception as e:
