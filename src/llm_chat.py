@@ -24,7 +24,7 @@ Remember to always stay in character and only respond with the response and noth
 EMOJI_MAP = {
     "HanniLul": "<:HanniLul:1291756842934075493>",
     "Shocked_Chaewon": "<a:Shocked_Chaewon:1249846852061499443>",
-    "yejiSmirk": "<:yejiSmirk:1193087050719707136>",
+    "yejiSmirk~1": "<:yejiSmirk:1193087050719707136>",
     "bruh": "<:bruh:1249484824012656670>",
     "Chaewon_gun": "<a:Chaewon_gun:1255142502864916543>",
     "Yeojin_kiss": "<a:Yeojin_kiss:1277148710488244256>",
