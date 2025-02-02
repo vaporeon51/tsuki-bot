@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+
 import psycopg
 
 from . import CONN_DICT
@@ -78,7 +79,8 @@ def get_recent_birthdays() -> list[tuple[str, str, str]]:
     Returns a list of tuples with role_id, member_name, and group_name.
     """
     # Calculate today's and yesterday's month-day combinations
-    now = datetime.now(timezone.utc)
+    kst = timezone(timedelta(hours=9))
+    now = datetime.now(kst)
     yesterday = now - timedelta(days=1)
 
     # Format as MM-DD strings for comparison

@@ -1,6 +1,7 @@
 from discord.ext import commands
 
 from src.db.birthday_feed import get_birthday_feeds, get_recent_birthdays, get_recent_messages, log_message
+from src.utils import get_random_link_for_each_role
 
 
 async def update_birthday_feeds(bot: commands.Bot) -> None:
@@ -24,6 +25,7 @@ async def update_birthday_feeds(bot: commands.Bot) -> None:
             if (guild_id, channel_id, role_id) not in recent_messages_set:
                 # Format the birthday message
                 message = f"# 🎉 Happy Birthday, {member_name}! 🎂"
+                gif_url = get_random_link_for_each_role([role_id], "18 year")
 
                 try:
                     # 5. Send the message via Discord
@@ -36,6 +38,7 @@ async def update_birthday_feeds(bot: commands.Bot) -> None:
                         continue  # Skip if the channel is not found
 
                     await channel.send(message)
+                    await channel.send(gif_url)
 
                     # Log the sent message immediately
                     log_message(guild_id, channel_id, role_id)

@@ -12,17 +12,18 @@ load_dotenv(WEB_APP_PATH.joinpath(".env").as_posix())
 
 IS_DEV = os.environ.get("IS_DEV", "false") == "true"
 
+from src.birthday_feed import update_birthday_feeds
+
 # Local imports after dotenv to ensure environment variables are available
 from src.config.constants import REDDIT_FEED_WINDOW, REPORT_EMOTE, TSUKI_HARAM_HUG, TSUKI_NOM, UPVOTE_EMOTE
 from src.content_update import run_content_links_update
+from src.db.birthday_feed import set_birthday_feed, unset_birthday_feeds
 from src.db.guild_settings import get_min_age, set_min_age
 from src.db.reddit_feeds import get_subscriptions, set_reddit_feed, unset_feeds
-from src.db.birthday_feed import set_birthday_feed, unset_birthday_feeds
 from src.db.stats import add_stat_count
 from src.db.utils import get_closest_roles, get_latest_links_for_roles, get_random_link_for_each_role, get_random_roles
 from src.reaction.gather import gather_reactions
 from src.reddit_feeds import update_reddit_feeds
-from src.birthday_feed import update_birthday_feeds
 
 TOKEN = os.environ.get("TOKEN")
 
@@ -71,7 +72,7 @@ async def update_reddit_feeds_loop():
         print(f"Error with reddit update:\n{str(e)}")
 
 
-@tasks.loop(seconds=60 * 60 * 3)
+@tasks.loop(seconds=60 * 5)
 async def update_birthday_feeds_loop():
     try:
         await update_birthday_feeds(bot=bot)
