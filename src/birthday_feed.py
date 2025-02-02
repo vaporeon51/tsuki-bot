@@ -1,7 +1,7 @@
 from discord.ext import commands
 
 from src.db.birthday_feed import get_birthday_feeds, get_recent_birthdays, get_recent_messages, log_message
-from src.utils import get_random_link_for_each_role
+from src.db.utils import get_random_link_for_each_role
 
 
 async def update_birthday_feeds(bot: commands.Bot) -> None:
