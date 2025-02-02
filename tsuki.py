@@ -12,9 +12,12 @@ load_dotenv(WEB_APP_PATH.joinpath(".env").as_posix())
 
 IS_DEV = os.environ.get("IS_DEV", "false") == "true"
 
+from src.birthday_feed import update_birthday_feeds
+
 # Local imports after dotenv to ensure environment variables are available
 from src.config.constants import REDDIT_FEED_WINDOW, REPORT_EMOTE, TSUKI_HARAM_HUG, TSUKI_NOM, UPVOTE_EMOTE
 from src.content_update import run_content_links_update
+from src.db.birthday_feed import set_birthday_feed, unset_birthday_feeds
 from src.db.guild_settings import get_min_age, set_min_age
 from src.db.reddit_feeds import get_subscriptions, set_reddit_feed, unset_feeds
 from src.db.stats import add_stat_count
@@ -34,6 +37,7 @@ class TsukiBot(commands.Bot):
 
     async def setup_hook(self):
         self.tree.add_command(Admin())
+        self.tree.add_command(BirthdayFeed())
         self.tree.add_command(RedditFeed())
         asyncio.create_task(self.custom_event_handler())
 
@@ -68,10 +72,18 @@ async def update_reddit_feeds_loop():
         print(f"Error with reddit update:\n{str(e)}")
 
 
+@tasks.loop(seconds=60 * 5)
+async def update_birthday_feeds_loop():
+    try:
+        await update_birthday_feeds(bot=bot)
+    except Exception as e:
+        print(f"Error with birthday update:\n{str(e)}")
+
+
 @bot.event
 async def on_ready():
     try:
-        print(f"Signed in as { bot.user }")
+        print(f"Signed in as {bot.user}")
         await bot.tree.sync()
         print("Successfully synced commands.")
     except Exception as e:
@@ -80,13 +92,14 @@ async def on_ready():
     print(f"Currently in {len(bot.guilds)} servers:")
     for server in bot.guilds:
         try:
-            print("Server name:", server.name, ", owner:", server.owner.name, "num of members:", server.member_count)
+            print("Server name:", server.name, "num of members:", server.member_count)
         except Exception as e:
             print("Could not get server info for:", server.name, str(e))
 
     if not IS_DEV:
         update_content_loop.start()
         update_reddit_feeds_loop.start()
+        update_birthday_feeds_loop.start()
 
 
 @bot.tree.command(name="feed", description="Get random kpop content using idol or group name.")
@@ -342,6 +355,40 @@ class RedditFeed(discord.app_commands.Group):
             print(e)
             await interaction.response.send_message(f"Failed to unset feeds: {e}", ephemeral=True)
         add_stat_count("reddit_unset_feeds")
+
+
+@discord.app_commands.default_permissions(manage_messages=True)
+@discord.app_commands.guild_only()
+class BirthdayFeed(discord.app_commands.Group):
+    def __init__(self):
+        super().__init__(name="birthday_feed", description="Commands for configuring birthday feed.")
+        return
+
+    @discord.app_commands.command(
+        name="set_feed",
+        description="Set a channel to receive birthday messages.",
+    )
+    @discord.app_commands.describe(channel="Channel to receive birthday updates")
+    async def set_feed(self, interaction: discord.Interaction, channel: discord.TextChannel):
+        try:
+            assert interaction.guild_id is not None
+            set_birthday_feed(interaction.guild_id, channel.id)
+            await interaction.response.send_message(f"Channel `{channel.name}` is set to recieve birthday updates.")
+        except Exception as e:
+            print(e)
+            await interaction.response.send_message(f"Failed to set channel: {e}", ephemeral=True)
+        add_stat_count("birthday_set_feed")
+
+    @discord.app_commands.command(name="unset_feeds", description="Unset all birthday feeds for this server.")
+    async def unset_feeds(self, interaction: discord.Interaction):
+        try:
+            assert interaction.guild_id is not None
+            unset_birthday_feeds(interaction.guild_id)
+            await interaction.response.send_message("Unset all birthday feeds for this server.")
+        except Exception as e:
+            print(e)
+            await interaction.response.send_message(f"Failed to unset feeds: {e}", ephemeral=True)
+        add_stat_count("birthday_unset_feed")
 
 
 @discord.app_commands.default_permissions(manage_guild=True)
