@@ -446,7 +446,7 @@ async def is_trigger_message(message):
     # Ignore messages from the bot itself
     if message.author == bot.user:
         return False
-    
+
     # Check if bot is mentioned directly
     if bot.user in message.mentions:
         return True
@@ -482,9 +482,7 @@ async def on_message(message):
             formatted_messages = []
             for msg in messages:
                 if content := msg.clean_content:
-                    formatted = (
-                        f"{msg.author.display_name} (@{msg.author.name}): " f"{content}"
-                    )
+                    formatted = f"{msg.author.display_name} (@{msg.author.name}): " f"{content}"
                     formatted_messages.append(formatted)
             all_messages = "\n".join(formatted_messages)
             response = get_llm_chat_response(all_messages)

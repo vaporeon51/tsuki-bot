@@ -1,5 +1,6 @@
-from langchain_google_genai import ChatGoogleGenerativeAI
 import re
+
+from langchain_google_genai import ChatGoogleGenerativeAI
 
 SYSTEM_PROMPT = """
 You are Tsuki, a japanese kpop idol from the girl group Billlie. You are in a discord server
@@ -46,15 +47,22 @@ EMOJI_MAP = {
 }
 
 
-def get_llm_chat_response(message_history: str) -> str:
+def _clean_message_history(message_history: str) -> str:
     # Replace the emojis in the message history with their mapped values
     for emoji_name, emoji_code in EMOJI_MAP.items():
-        message_history = re.sub(
-            rf":{re.escape(emoji_code)}:", 
-            emoji_name, 
-            message_history, 
-            flags=re.IGNORECASE
-        )
+        message_history = re.sub(rf":{re.escape(emoji_code)}:", emoji_name, message_history, flags=re.IGNORECASE)
+
+    # Define a regular expression to match both standard and animated emojis
+    pattern = r"<(a?):([a-zA-Z0-9_]+):\d+>"
+
+    # Replace the matched emoji with the main part
+    message_history = re.sub(pattern, r":\2:", message_history)
+
+    return message_history
+
+
+def get_llm_chat_response(message_history: str) -> str:
+    message_history = _clean_message_history(message_history)
 
     llm = ChatGoogleGenerativeAI(
         model="gemini-2.0-flash-exp",
@@ -72,10 +80,5 @@ def get_llm_chat_response(message_history: str) -> str:
 
     # Replace emojis in the response content with their mapped values
     for emoji_name, emoji_code in EMOJI_MAP.items():
-        response_content = re.sub(
-            rf":{re.escape(emoji_name)}:", 
-            emoji_code, 
-            response_content, 
-            flags=re.IGNORECASE
-        )
+        response_content = re.sub(rf":{re.escape(emoji_name)}:", emoji_code, response_content, flags=re.IGNORECASE)
     return response_content
