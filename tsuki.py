@@ -471,7 +471,7 @@ async def on_message(message):
 
             # Fetch message history (10 messages before the mentioned message)
             messages = []
-            async for msg in channel.history(limit=10, before=message):
+            async for msg in channel.history(limit=20, before=message):
                 messages.append(msg)
 
             # Add the mentioned message to the list and reverse for chronological order
@@ -481,11 +481,11 @@ async def on_message(message):
             # Format messages with display name and username
             formatted_messages = []
             for msg in messages:
-                content = msg.clean_content
-                formatted = (
-                    f"{msg.author.display_name} (@{msg.author.name}): " f"{content if content else '[No text content]'}"
-                )
-                formatted_messages.append(formatted)
+                if content := msg.clean_content:
+                    formatted = (
+                        f"{msg.author.display_name} (@{msg.author.name}): " f"{content}"
+                    )
+                    formatted_messages.append(formatted)
             all_messages = "\n".join(formatted_messages)
             response = get_llm_chat_response(all_messages)
 
