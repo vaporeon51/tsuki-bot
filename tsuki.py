@@ -491,6 +491,7 @@ async def on_message(message):
 
             # Send the response
             await channel.send(response)
+            add_stat_count("llm_response")
 
         except Exception as e:
             await channel.send(f"Sorry, I encountered an error: {str(e)}")
