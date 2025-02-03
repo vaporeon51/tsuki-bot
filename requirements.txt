@@ -5,6 +5,7 @@ Levenshtein
 SQLAlchemy
 psycopg[binary,pool]
 requests
+langchain-google-genai
 
 # Reddit
 asyncpraw

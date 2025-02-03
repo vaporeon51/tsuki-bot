@@ -22,6 +22,7 @@ from src.db.guild_settings import get_min_age, set_min_age
 from src.db.reddit_feeds import get_subscriptions, set_reddit_feed, unset_feeds
 from src.db.stats import add_stat_count
 from src.db.utils import get_closest_roles, get_latest_links_for_roles, get_random_link_for_each_role, get_random_roles
+from src.llm_chat import get_llm_chat_response
 from src.reaction.gather import gather_reactions
 from src.reddit_feeds import update_reddit_feeds
 
@@ -439,6 +440,62 @@ class Admin(discord.app_commands.Group):
                 "Min age was not poorly formatted. Should be in the format `22 year 2 month 2 week`", ephemeral=True
             )
         add_stat_count("set_age_limit")
+
+
+async def is_trigger_message(message):
+    # Ignore messages from the bot itself
+    if message.author == bot.user:
+        return False
+
+    # Check if bot is mentioned directly
+    if bot.user in message.mentions:
+        return True
+
+    # Check if message is a reply to the bot
+    if message.reference:
+        try:
+            # Fetch the referenced message
+            referenced_message = await message.channel.fetch_message(message.reference.message_id)
+            if referenced_message.author == bot.user:
+                return True
+        except:
+            pass
+    return False
+
+
+@bot.event
+async def on_message(message):
+    if await is_trigger_message(message):
+        try:
+            channel = message.channel
+
+            # Fetch message history (10 messages before the mentioned message)
+            messages = []
+            async for msg in channel.history(limit=20, before=message):
+                messages.append(msg)
+
+            # Add the mentioned message to the list and reverse for chronological order
+            messages.reverse()
+            messages.append(message)
+
+            # Format messages with display name and username
+            formatted_messages = []
+            for msg in messages:
+                if content := msg.clean_content:
+                    formatted = f"{msg.author.display_name} (@{msg.author.name}): " f"{content}"
+                    formatted_messages.append(formatted)
+            all_messages = "\n".join(formatted_messages)
+            response = get_llm_chat_response(all_messages)
+
+            # Send the response
+            await channel.send(response)
+            add_stat_count("llm_response")
+
+        except Exception as e:
+            await channel.send(f"Sorry, I encountered an error: {str(e)}")
+
+    # Process other commands
+    await bot.process_commands(message)
 
 
 bot.run(TOKEN)
