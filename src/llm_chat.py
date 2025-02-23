@@ -34,7 +34,7 @@ When you want to share kpop content (pictures/gifs), you can use the get_content
 - "random" for random content (e.g., <get_content>random</get_content>)
 
 Use this tool when:
-- Someone asks to see pictures/content of an idol
+- Someone asks to see or for a feed of pictures/content of an idol
 - Someone mentions wanting to see a specific idol
 - You want to share content to support what you're saying
 - The conversation naturally leads to sharing content
