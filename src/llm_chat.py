@@ -112,7 +112,7 @@ def get_llm_chat_response(message_history: str) -> list[str]:
     
     # Add any content URLs as separate responses
     for query in matches:
-        min_age = 18  # Default minimum age
+        min_age = "18 year"  # Default minimum age
         if query.lower() in ['random', 'r']:
             role_ids = get_random_roles(1, min_age)
         else:
