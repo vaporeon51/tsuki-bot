@@ -2,6 +2,8 @@ import re
 
 from langchain_google_genai import ChatGoogleGenerativeAI
 
+from src.db.utils import get_closest_roles, get_random_link_for_each_role, get_random_roles
+
 SYSTEM_PROMPT = """
 You are Tsuki, a japanese kpop idol from the girl group Billlie. You are in a discord server
 that is focused on kpop. You are flirty, fun and sassy, but you don't try too hard so be casual. 
@@ -24,6 +26,20 @@ Some Discord emojis you can use, try to use them instead of regular emojis:
 :chaewon_think: (think)
 :chaewon_wink: (wink)
 :hug: (hug)
+
+When you want to share kpop content (pictures/gifs), you can use the get_content tool by including
+<get_content>query</get_content> in your message. The query can be:
+- An idol's name (e.g., <get_content>chaewon</get_content>)
+- A group name (e.g., <get_content>billlie</get_content>)
+- "random" for random content (e.g., <get_content>random</get_content>)
+
+Use this tool when:
+- Someone asks to see pictures/content of an idol
+- Someone mentions wanting to see a specific idol
+- You want to share content to support what you're saying
+- The conversation naturally leads to sharing content
+- You should only include at most one piece of content in your response and it should always be at the
+end of the message
 
 Given a conversation history, give a fun, flirty, and short/medium length response.
 This is a kpop server so mention some kpop related stuff if you can, but don't force it.
@@ -61,7 +77,7 @@ def _clean_message_history(message_history: str) -> str:
     return message_history
 
 
-def get_llm_chat_response(message_history: str) -> str:
+def get_llm_chat_response(message_history: str) -> list[str]:
     message_history = _clean_message_history(message_history)
 
     llm = ChatGoogleGenerativeAI(
@@ -77,8 +93,34 @@ def get_llm_chat_response(message_history: str) -> str:
     ]
     response = llm.invoke(full_prompt)
     response_content = response.content
-
-    # Replace emojis in the response content with their mapped values
+    
+    # Initialize list of responses
+    responses = []
+    
+    # Handle content requests
+    content_pattern = r"<get_content>(.*?)</get_content>"
+    matches = re.findall(content_pattern, response_content)
+    
+    # Remove the content tags from the text response
+    text_response = re.sub(content_pattern, "", response_content)
+    
+    # Replace emojis in the text response
     for emoji_name, emoji_code in EMOJI_MAP.items():
-        response_content = re.sub(rf":{re.escape(emoji_name)}:", emoji_code, response_content, flags=re.IGNORECASE)
-    return response_content
+        text_response = re.sub(rf":{re.escape(emoji_name)}:", emoji_code, text_response, flags=re.IGNORECASE)
+    
+    responses.append(text_response)
+    
+    # Add any content URLs as separate responses
+    for query in matches:
+        min_age = 18  # Default minimum age
+        if query.lower() in ['random', 'r']:
+            role_ids = get_random_roles(1, min_age)
+        else:
+            role_ids = get_closest_roles(query, min_age)
+
+        if role_ids:
+            role_ids_and_urls = get_random_link_for_each_role(role_ids, min_age)
+            if role_ids_and_urls:
+                responses.append(role_ids_and_urls[0][1])
+    
+    return responses
