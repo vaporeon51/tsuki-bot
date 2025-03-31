@@ -453,7 +453,7 @@ async def is_trigger_message(message: discord.Message):
 
     # Check if the message is in a subreddit feed, if so it's not a trigger
     if message.channel:
-        subs = get_subscriptions(message.channel.guild_id)
+        subs = get_subscriptions(message.guild.id)
         for channel_id, _ in subs:
             if channel_id == message.channel.id:
                 return False
