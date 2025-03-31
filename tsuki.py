@@ -442,7 +442,7 @@ class Admin(discord.app_commands.Group):
         add_stat_count("set_age_limit")
 
 
-async def is_trigger_message(message):
+async def is_trigger_message(message: discord.Message):
     # Ignore messages from the bot itself
     if message.author == bot.user:
         return False
@@ -450,6 +450,13 @@ async def is_trigger_message(message):
     # Check if bot is mentioned directly
     if bot.user in message.mentions:
         return True
+
+    # Check if the message is in a subreddit feed, if so it's not a trigger
+    if message.channel:
+        subs = get_subscriptions(message.channel.guild_id)
+        for channel_id, _ in subs:
+            if channel_id == message.channel.id:
+                return False
 
     # Check if message is a reply to the bot
     if message.reference:
@@ -464,7 +471,7 @@ async def is_trigger_message(message):
 
 
 @bot.event
-async def on_message(message):
+async def on_message(message: discord.Message):
     if await is_trigger_message(message):
         try:
             channel = message.channel
