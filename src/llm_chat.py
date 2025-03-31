@@ -93,27 +93,27 @@ def get_llm_chat_response(message_history: str) -> list[str]:
     ]
     response = llm.invoke(full_prompt)
     response_content = response.content
-    
+
     # Initialize list of responses
     responses = []
-    
+
     # Handle content requests
     content_pattern = r"<get_content>(.*?)</get_content>"
     matches = re.findall(content_pattern, response_content)
-    
+
     # Remove the content tags from the text response
     text_response = re.sub(content_pattern, "", response_content)
-    
+
     # Replace emojis in the text response
     for emoji_name, emoji_code in EMOJI_MAP.items():
         text_response = re.sub(rf":{re.escape(emoji_name)}:", emoji_code, text_response, flags=re.IGNORECASE)
-    
+
     responses.append(text_response)
-    
+
     # Add any content URLs as separate responses
     for query in matches:
         min_age = "18 year"  # Default minimum age
-        if query.lower() in ['random', 'r']:
+        if query.lower() in ["random", "r"]:
             role_ids = get_random_roles(1, min_age)
         else:
             role_ids = get_closest_roles(query, min_age)
@@ -122,5 +122,5 @@ def get_llm_chat_response(message_history: str) -> list[str]:
             role_ids_and_urls = get_random_link_for_each_role(role_ids, min_age)
             if role_ids_and_urls:
                 responses.append(role_ids_and_urls[0][1])
-    
+
     return responses
