@@ -1,6 +1,11 @@
 import psycopg
 
 from . import CONN_DICT
+from src.config.constants import GUILD_SETTINGS_CACHE_SIZE
+from src.utils import LRUCache
+
+REDDIT_FEEDS_CACHE = LRUCache(capacity=GUILD_SETTINGS_CACHE_SIZE)
+
 
 
 def set_reddit_feed(guild_id: int, channel_id: int, subreddit: str) -> None:
@@ -14,9 +19,12 @@ def set_reddit_feed(guild_id: int, channel_id: int, subreddit: str) -> None:
                 """,
                 (guild_id, channel_id, subreddit),
             )
+            REDDIT_FEEDS_CACHE.invalidate(guild_id)
 
 
 def get_subscriptions(guild_id: int) -> list[tuple[int, str]]:
+    if guild_id in REDDIT_FEEDS_CACHE:
+        return REDDIT_FEEDS_CACHE.get(guild_id)
     with psycopg.connect(**CONN_DICT) as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -29,7 +37,9 @@ def get_subscriptions(guild_id: int) -> list[tuple[int, str]]:
             )
             results = cur.fetchall()
 
-    return [(channel_id, subreddit) for _, subreddit, channel_id in results]
+    results = [(channel_id, subreddit) for _, subreddit, channel_id in results]
+    REDDIT_FEEDS_CACHE.put(guild_id, results)
+    return results
 
 
 def unset_feeds(guild_id: int) -> None:
@@ -42,6 +52,7 @@ def unset_feeds(guild_id: int) -> None:
                 """,
                 (guild_id,),
             )
+            REDDIT_FEEDS_CACHE.invalidate(guild_id)
 
 
 def get_feed_configs() -> list[tuple[int, int]]:
