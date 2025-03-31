@@ -492,10 +492,11 @@ async def on_message(message: discord.Message):
                     formatted = f"{msg.author.display_name} (@{msg.author.name}): " f"{content}"
                     formatted_messages.append(formatted)
             all_messages = "\n".join(formatted_messages)
-            response = get_llm_chat_response(all_messages)
+            responses = get_llm_chat_response(all_messages)
 
-            # Send the response
-            await channel.send(response)
+            # Send each response separately
+            for response in responses:
+                await channel.send(response)
             add_stat_count("llm_response")
 
         except Exception as e:
