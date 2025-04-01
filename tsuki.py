@@ -451,19 +451,16 @@ async def is_trigger_message(message: discord.Message):
     if bot.user in message.mentions:
         return True
 
-    # Check if the message is in a subreddit feed, if so it's not a trigger
-    if message.channel:
-        subs = get_subscriptions(message.guild.id)
-        for channel_id, _ in subs:
-            if channel_id == message.channel.id:
-                return False
-
     # Check if message is a reply to the bot
     if message.reference:
         try:
             # Fetch the referenced message
             referenced_message = await message.channel.fetch_message(message.reference.message_id)
             if referenced_message.author == bot.user:
+                # If the referenced message starts with "[r/", then it's a reddit post
+                # and so don't trigger
+                if referenced_message.content.startswith("[r/"):
+                    return False
                 return True
         except:
             pass
