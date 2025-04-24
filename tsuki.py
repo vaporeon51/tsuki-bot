@@ -442,7 +442,7 @@ class Admin(discord.app_commands.Group):
         add_stat_count("set_age_limit")
 
 
-async def is_trigger_message(message):
+async def is_trigger_message(message: discord.Message):
     # Ignore messages from the bot itself
     if message.author == bot.user:
         return False
@@ -457,6 +457,10 @@ async def is_trigger_message(message):
             # Fetch the referenced message
             referenced_message = await message.channel.fetch_message(message.reference.message_id)
             if referenced_message.author == bot.user:
+                # If the referenced message starts with "[r/", then it's a reddit post
+                # and so don't trigger
+                if referenced_message.content.startswith("[r/"):
+                    return False
                 return True
         except:
             pass
@@ -464,7 +468,7 @@ async def is_trigger_message(message):
 
 
 @bot.event
-async def on_message(message):
+async def on_message(message: discord.Message):
     if await is_trigger_message(message):
         try:
             channel = message.channel
