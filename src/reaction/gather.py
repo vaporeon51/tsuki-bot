@@ -11,6 +11,9 @@ async def gather_dead_link(message: discord.Message, url: str) -> None:
     """
     Gather only deadlink no reactions.
     """
+
+    await asyncio.sleep(30)
+
     message = await message.channel.fetch_message(message.id)
 
     if is_message_broken_link(message):
