@@ -7,6 +7,20 @@ from src.db.utils import report_broken_link_url, update_given_emote_counts
 from src.utils import is_message_broken_link
 
 
+async def gather_dead_link(message: discord.Message, url: str) -> None:
+    """
+    Gather only deadlink no reactions.
+    """
+
+    await asyncio.sleep(30)
+
+    message = await message.channel.fetch_message(message.id)
+
+    if is_message_broken_link(message):
+        print(f"URL {url} is broken and incrementing their report counts.")
+        report_broken_link_url(url=url)
+
+
 async def gather_reactions(message: discord.Message, url: str, role_id: str) -> None:
     """
     Gathers the reaction of message

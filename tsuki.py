@@ -15,15 +15,26 @@ IS_DEV = os.environ.get("IS_DEV", "false") == "true"
 from src.birthday_feed import update_birthday_feeds
 
 # Local imports after dotenv to ensure environment variables are available
-from src.config.constants import REDDIT_FEED_WINDOW, REPORT_EMOTE, TSUKI_HARAM_HUG, TSUKI_NOM, UPVOTE_EMOTE
+from src.config.constants import (
+    REDDIT_FEED_WINDOW,
+    REPORT_EMOTE,
+    TSUKI_HARAM_HUG,
+    TSUKI_NOM,
+    UPVOTE_EMOTE,
+)
 from src.content_update import run_content_links_update
 from src.db.birthday_feed import set_birthday_feed, unset_birthday_feeds
 from src.db.guild_settings import get_min_age, set_min_age
 from src.db.reddit_feeds import get_subscriptions, set_reddit_feed, unset_feeds
 from src.db.stats import add_stat_count
-from src.db.utils import get_closest_roles, get_latest_links_for_roles, get_random_link_for_each_role, get_random_roles
+from src.db.utils import (
+    get_closest_roles,
+    get_latest_links_for_roles,
+    get_random_link_for_each_role,
+    get_random_roles,
+)
 from src.llm_chat import get_llm_chat_response
-from src.reaction.gather import gather_reactions
+from src.reaction.gather import gather_dead_link, gather_reactions
 from src.reddit_feeds import update_reddit_feeds
 
 TOKEN = os.environ.get("TOKEN")
@@ -32,7 +43,9 @@ TOKEN = os.environ.get("TOKEN")
 class TsukiBot(commands.Bot):
     def __init__(self):
         intents = discord.Intents.default()
-        super().__init__(intents=intents, command_prefix="['/tsuki', '/tk', '!']", help_command=None)
+        super().__init__(
+            intents=intents, command_prefix="['/tsuki', '/tk', '!']", help_command=None
+        )
         self.custom_event_queue = asyncio.Queue()
         self.active_commands: dict[int, dict[str, list[asyncio.Task]]] = {}
 
@@ -48,7 +61,10 @@ class TsukiBot(commands.Bot):
             if event["type"] == "cancel_command":
                 guild_id = event["guild_id"]
                 command_name = event["command_name"]
-                if guild_id in self.active_commands and command_name in self.active_commands[guild_id]:
+                if (
+                    guild_id in self.active_commands
+                    and command_name in self.active_commands[guild_id]
+                ):
                     command_tasks = self.active_commands[guild_id][command_name]
                     for command_task in command_tasks:
                         command_task.cancel()
@@ -104,7 +120,9 @@ async def on_ready():
 
 
 @bot.tree.command(name="feed", description="Get random kpop content using idol or group name.")
-@discord.app_commands.describe(query="Idols and groups you want to include. Use `r` or `random` for random idol.")
+@discord.app_commands.describe(
+    query="Idols and groups you want to include. Use `r` or `random` for random idol."
+)
 async def feed(interaction: discord.Interaction, query: str | None = None):
 
     min_age = get_min_age(interaction.guild_id)
@@ -137,7 +155,9 @@ async def feed(interaction: discord.Interaction, query: str | None = None):
 
     # Count emotes and update database
     sent_message = await interaction.channel.fetch_message(sent_message.id)
-    await gather_reactions(message=sent_message, url=role_ids_and_urls[0][1], role_id=role_ids_and_urls[0][0])
+    await gather_reactions(
+        message=sent_message, url=role_ids_and_urls[0][1], role_id=role_ids_and_urls[0][0]
+    )
 
     add_stat_count("feed")
 
@@ -148,15 +168,21 @@ async def feed(interaction: discord.Interaction, query: str | None = None):
     num_images="Number of images to display. Defaults to 5. Max of 20.",
     skip="Number of images to skip from the beginning. Defaults to 0.",
 )
-async def latest(interaction: discord.Interaction, query: str | None = None, num_images: int = 5, skip: int = 0):
+async def latest(
+    interaction: discord.Interaction, query: str | None = None, num_images: int = 5, skip: int = 0
+):
 
     if num_images > 20:
-        await interaction.response.send_message("Cannot send more than 20 links at a time.", ephemeral=True)
+        await interaction.response.send_message(
+            "Cannot send more than 20 links at a time.", ephemeral=True
+        )
         return
 
     min_age = get_min_age(interaction.guild_id)
     if query in [None, "a", "all"]:
-        role_ids_and_urls = get_latest_links_for_roles(num_links=num_images, skip=skip, min_age=min_age)
+        role_ids_and_urls = get_latest_links_for_roles(
+            num_links=num_images, skip=skip, min_age=min_age
+        )
     else:
         role_ids = get_closest_roles(query, min_age, count=num_images)
         if not role_ids:
@@ -169,7 +195,9 @@ async def latest(interaction: discord.Interaction, query: str | None = None, num
         )
 
     if not role_ids_and_urls:
-        await interaction.response.send_message("Could not find any content with these inputs.", ephemeral=True)
+        await interaction.response.send_message(
+            "Could not find any content with these inputs.", ephemeral=True
+        )
         return
 
     text = f"Fetched latest `{len(role_ids_and_urls)}` images of `{query if query else 'all'}` after skipping first `{skip}` {TSUKI_NOM}"
@@ -201,7 +229,9 @@ async def latest(interaction: discord.Interaction, query: str | None = None, num
 )
 @discord.app_commands.default_permissions(manage_guild=True)
 @discord.app_commands.guild_only()
-async def autofeed(interaction: discord.Interaction, query: str | None = None, interval: int = 20, count: int = 5):
+async def autofeed(
+    interaction: discord.Interaction, query: str | None = None, interval: int = 20, count: int = 5
+):
     if interval < 2 or interval > 60 * 60 * 24:
         await interaction.response.send_message(
             f"Interval must be between 2 seconds and 24 hours ({60 * 60 * 24}).", ephemeral=True
@@ -226,7 +256,9 @@ async def autofeed(interaction: discord.Interaction, query: str | None = None, i
         add_stat_count("autofeed")
 
 
-async def autofeed_command(interaction: discord.Interaction, query: str | None, interval: int, count: int):
+async def autofeed_command(
+    interaction: discord.Interaction, query: str | None, interval: int, count: int
+):
     await interaction.response.defer(thinking=True)
     min_age = get_min_age(interaction.guild_id)
     if query in [None, "r", "random"]:
@@ -319,7 +351,10 @@ class RedditFeed(discord.app_commands.Group):
         subreddit="Name of subreddit, defaults to `kpopfap`. Do not include `r/`.",
     )
     async def set_feed(
-        self, interaction: discord.Interaction, channel: discord.TextChannel, subreddit: str = "kpopfap"
+        self,
+        interaction: discord.Interaction,
+        channel: discord.TextChannel,
+        subreddit: str = "kpopfap",
     ):
         try:
             assert interaction.guild_id is not None
@@ -332,21 +367,31 @@ class RedditFeed(discord.app_commands.Group):
             await interaction.response.send_message(f"Failed to set channel: {e}", ephemeral=True)
         add_stat_count("reddit_set_feed")
 
-    @discord.app_commands.command(name="list_feeds", description="List the existing subscriptions for this server.")
+    @discord.app_commands.command(
+        name="list_feeds", description="List the existing subscriptions for this server."
+    )
     async def list_feeds(self, interaction: discord.Interaction):
         try:
             assert interaction.guild_id is not None
             subs = get_subscriptions(interaction.guild_id)
             if not subs:
-                await interaction.response.send_message("No reddit feeds for this server.", ephemeral=True)
+                await interaction.response.send_message(
+                    "No reddit feeds for this server.", ephemeral=True
+                )
             else:
-                await interaction.response.send_message(f"Subscriptions of channel and subreddit: `{str(subs)}`")
+                await interaction.response.send_message(
+                    f"Subscriptions of channel and subreddit: `{str(subs)}`"
+                )
         except Exception as e:
             print(e)
-            await interaction.response.send_message(f"Failed to get server subscriptions: {e}", ephemeral=True)
+            await interaction.response.send_message(
+                f"Failed to get server subscriptions: {e}", ephemeral=True
+            )
         add_stat_count("reddit_list_feeds")
 
-    @discord.app_commands.command(name="unset_feeds", description="Unset all reddit feeds for this server.")
+    @discord.app_commands.command(
+        name="unset_feeds", description="Unset all reddit feeds for this server."
+    )
     async def unset_feeds(self, interaction: discord.Interaction):
         try:
             assert interaction.guild_id is not None
@@ -362,7 +407,9 @@ class RedditFeed(discord.app_commands.Group):
 @discord.app_commands.guild_only()
 class BirthdayFeed(discord.app_commands.Group):
     def __init__(self):
-        super().__init__(name="birthday_feed", description="Commands for configuring birthday feed.")
+        super().__init__(
+            name="birthday_feed", description="Commands for configuring birthday feed."
+        )
         return
 
     @discord.app_commands.command(
@@ -374,13 +421,17 @@ class BirthdayFeed(discord.app_commands.Group):
         try:
             assert interaction.guild_id is not None
             set_birthday_feed(interaction.guild_id, channel.id)
-            await interaction.response.send_message(f"Channel `{channel.name}` is set to recieve birthday updates.")
+            await interaction.response.send_message(
+                f"Channel `{channel.name}` is set to recieve birthday updates."
+            )
         except Exception as e:
             print(e)
             await interaction.response.send_message(f"Failed to set channel: {e}", ephemeral=True)
         add_stat_count("birthday_set_feed")
 
-    @discord.app_commands.command(name="unset_feeds", description="Unset all birthday feeds for this server.")
+    @discord.app_commands.command(
+        name="unset_feeds", description="Unset all birthday feeds for this server."
+    )
     async def unset_feeds(self, interaction: discord.Interaction):
         try:
             assert interaction.guild_id is not None
@@ -420,7 +471,12 @@ class Admin(discord.app_commands.Group):
         assert interaction.guild_id is not None
         # Sanitize the input a bit to make it more lenient
         min_age = min_age.lower()
-        for plural, singular in {"years": "year", "months": "month", "weeks": "week", "days": "day"}.items():
+        for plural, singular in {
+            "years": "year",
+            "months": "month",
+            "weeks": "week",
+            "days": "day",
+        }.items():
             min_age = min_age.replace(plural, singular)
         try:
             if "year" not in min_age or int(min_age.split("year")[0]) < 18:
@@ -437,7 +493,8 @@ class Admin(discord.app_commands.Group):
         except Exception as e:
             print(f"Guild setting failed for guild {interaction.guild_id}: {e}")
             await interaction.response.send_message(
-                "Min age was not poorly formatted. Should be in the format `22 year 2 month 2 week`", ephemeral=True
+                "Min age was not poorly formatted. Should be in the format `22 year 2 month 2 week`",
+                ephemeral=True,
             )
         add_stat_count("set_age_limit")
 
@@ -488,8 +545,12 @@ async def on_message(message):
             responses = get_llm_chat_response(all_messages)
 
             # Send each response separately
-            for response in responses:
-                await channel.send(response)
+            for i, response in enumerate(responses):
+                message = await channel.send(response)
+                # Any response after the first one must be a content link so check if its broken
+                if i > 0:
+                    await gather_dead_link(message, response)
+
             add_stat_count("llm_response")
 
         except Exception as e:
