@@ -81,7 +81,7 @@ def get_llm_chat_response(message_history: str) -> list[str]:
     message_history = _clean_message_history(message_history)
 
     llm = ChatGoogleGenerativeAI(
-        model="gemini-2.5-flash",
+        model="gemini-2.5-flash-lite",
         temperature=0.4,
         max_tokens=200,
         timeout=10,
