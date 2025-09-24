@@ -135,5 +135,5 @@ async def update_reddit_feeds(bot: commands.Bot, lookback_secs: int) -> None:
                             await channel.send(text)
                             await channel.send(post.media_urls[0])
         except Exception as e:
-            print(f"Error with sending post (f{guild_id}, {channel_id}, {subreddit})")
+            print(f"Error with sending post ({guild_id}, {channel_id}, {subreddit})")
     print(f"Update complete with {num_new_posts} posts.")
