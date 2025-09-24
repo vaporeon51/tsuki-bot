@@ -27,7 +27,9 @@ class RedditPost:
 
 async def get_latest_posts(subreddit: str) -> list[asyncpraw.models.Submission]:
     """Get latest posts from kpopfap subreddit."""
-    reddit = asyncpraw.Reddit(client_id=REDDIT_CLIENT_ID, client_secret=REDDIT_SECRET, user_agent="tsuki-bot")
+    reddit = asyncpraw.Reddit(
+        client_id=REDDIT_CLIENT_ID, client_secret=REDDIT_SECRET, user_agent="tsuki-bot"
+    )
     subreddit = await reddit.subreddit(subreddit)
     posts = []
     async for post in subreddit.new(limit=10):
@@ -105,7 +107,9 @@ async def update_reddit_feeds(bot: commands.Bot, lookback_secs: int) -> None:
                 try:
                     parsed_post = parse_post(post)
                 except Exception as e:
-                    print(f"Could not parse post {post.title} from subreddit {subreddit}. Error: {str(e)}")
+                    print(
+                        f"Could not parse post {post.title} from subreddit {subreddit}. Error: {str(e)}"
+                    )
                     continue
 
                 if curr_time - parsed_post.created_utc < lookback_secs:
@@ -119,14 +123,17 @@ async def update_reddit_feeds(bot: commands.Bot, lookback_secs: int) -> None:
 
     # Send those posts
     for guild_id, channel_id, subreddit in feed_configs:
-        if bot.get_guild(guild_id):
-            if channel := bot.get_channel(channel_id):
-                for post in posts_by_subreddit.get(subreddit, []):
-                    text = f"[r/{subreddit}] **{post.title}**"
-                    if post.is_gallery:
-                        images = get_image_files(post.media_urls)
-                        await channel.send(text, files=images)
-                    else:
-                        await channel.send(text)
-                        await channel.send(post.media_urls[0])
+        try:
+            if bot.get_guild(guild_id):
+                if channel := bot.get_channel(channel_id):
+                    for post in posts_by_subreddit.get(subreddit, []):
+                        text = f"[r/{subreddit}] **{post.title}**"
+                        if post.is_gallery:
+                            images = get_image_files(post.media_urls)
+                            await channel.send(text, files=images)
+                        else:
+                            await channel.send(text)
+                            await channel.send(post.media_urls[0])
+        except Exception as e:
+            print(f"Error with sending post (f{guild_id}, {channel_id}, {subreddit})")
     print(f"Update complete with {num_new_posts} posts.")
