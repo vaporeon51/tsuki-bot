@@ -5,7 +5,12 @@ from datetime import datetime
 import requests
 from dateutil import parser
 
-from src.db.content_update import ContentLink, get_latest_message_id, get_role_ids, upsert_content_links_and_update_logs
+from src.db.content_update import (
+    ContentLink,
+    get_latest_message_id,
+    get_role_ids,
+    upsert_content_links_and_update_logs,
+)
 
 KPF_CHANNEL_ID = "124767749099618304"
 USER_AUTH = os.environ["USER_AUTH"]
@@ -21,7 +26,9 @@ def get_latest_messages(after_message_id: str) -> list[dict]:
     return resp.json()
 
 
-def process_message(message_json: dict, valid_roles: list[str], processed_date: datetime) -> list[ContentLink]:
+def process_message(
+    message_json: dict, valid_roles: list[str], processed_date: datetime
+) -> list[ContentLink]:
     """Processes an individual message json into content links"""
 
     # If there are no ping roles or relevant roles then return
@@ -38,8 +45,11 @@ def process_message(message_json: dict, valid_roles: list[str], processed_date: 
     # Get links
     links = []
     for embed in message_json["embeds"]:
-        if embed["type"] == "gifv":
-            links.append(embed["video"]["url"])
+        if embed["type"] in ["gifv"]:  # Maybe add video and webp later
+            if "video" in embed:
+                links.append(embed["video"]["url"])
+            else:
+                links.append(embed["url"])
 
     if not links:
         return []
@@ -77,10 +87,16 @@ async def run_content_links_update() -> None:
     role_ids = get_role_ids()
 
     # Continuous fetch messages until there are none left
-    while new_messages := sorted(get_latest_messages(last_message_id), key=lambda x: x["timestamp"]):
+    while new_messages := sorted(
+        get_latest_messages(last_message_id), key=lambda x: x["timestamp"]
+    ):
         for message in new_messages:
-            if content_links := process_message(message, role_ids, processed_date):
-                new_links.extend(content_links)
+            try:
+                if content_links := process_message(message, role_ids, processed_date):
+                    new_links.extend(content_links)
+            except Exception as e:
+                print(f"Error with content update on message {message}.")
+                raise e
         # Wait a bit to not trigger rate limit (50 per second)
         await asyncio.sleep(1.2)
         last_message_id = new_messages[-1]["id"]
