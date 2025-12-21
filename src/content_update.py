@@ -45,11 +45,8 @@ def process_message(
     # Get links
     links = []
     for embed in message_json["embeds"]:
-        if embed["type"] in ["gifv"]:  # Maybe add video and webp later
-            if "video" in embed:
-                links.append(embed["video"]["url"])
-            else:
-                links.append(embed["url"])
+        if embed["type"] in ["gifv", "video"]:  # Maybe add webp later
+            links.append(embed["url"])
 
     if not links:
         return []
