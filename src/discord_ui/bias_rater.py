@@ -61,13 +61,13 @@ def build_round_embeds(
 
 
 def build_leaderboard_embeds(
-    title: str, tops: list[tuple[str, str, int, str]]
+    title: str, tops: list[tuple[str, str, str, int, str]]
 ) -> list[discord.Embed]:
     """Header embed with the ranked list + #1 image, plus gallery embeds for #2 and #3."""
     medals = {1: "🥇", 2: "🥈", 3: "🥉"}
 
     lines = []
-    for rank, (name, group, elo, _) in enumerate(tops, 1):
+    for rank, (_, name, group, elo, image_url) in enumerate(tops, 1):
         prefix = medals.get(rank, f"**#{rank}**")
         lines.append(f"{prefix}  **{name}** · {group} — **{elo}**")
 
@@ -77,14 +77,14 @@ def build_leaderboard_embeds(
         color=discord.Color.gold(),
         url=_EMBED_GROUP_URL,
     )
-    if tops and tops[0][3]:
-        header.set_image(url=tops[0][3])
+    if tops and tops[0][4]:
+        header.set_image(url=tops[0][4])
 
     embeds = [header]
     for rank in (2, 3):
-        if len(tops) >= rank and tops[rank - 1][3]:
+        if len(tops) >= rank and tops[rank - 1][4]:
             podium = discord.Embed(url=_EMBED_GROUP_URL)
-            podium.set_image(url=tops[rank - 1][3])
+            podium.set_image(url=tops[rank - 1][4])
             embeds.append(podium)
 
     return embeds

@@ -1,5 +1,6 @@
 import asyncio
 import os
+import random
 from pathlib import Path
 
 import discord
@@ -340,6 +341,128 @@ async def perform_autofeed_critical_operations(
 
     reaction_gathering_task = asyncio.create_task(gather_reactions(message, url, role_id))
     tasks.append(reaction_gathering_task)
+
+
+@bot.tree.command(
+    name="bias_autofeed",
+    description="Feast on kpop content automatically based on your idol bias rankings",
+)
+@discord.app_commands.describe(
+    scope="Rankings to base feed off of: personal, server, or global",
+    interval="Seconds between posts (default:20, min:2, max:24 hours)",
+    count="Number of posts (default:5, max:120)",
+)
+@discord.app_commands.choices(
+    scope=[
+        discord.app_commands.Choice(name="Personal", value="personal"),
+        discord.app_commands.Choice(name="Server", value="server"),
+        discord.app_commands.Choice(name="Global", value="global"),
+    ]
+)
+@discord.app_commands.default_permissions(manage_guild=True)
+@discord.app_commands.guild_only()
+async def bias_autofeed(
+    interaction: discord.Interaction, scope: str = "personal", interval: int = 20, count: int = 5
+):
+    if interval < 2 or interval > 60 * 60 * 24:
+        await interaction.response.send_message(
+            f"Interval must be between 2 seconds and 24 hours ({60 * 60 * 24}).", ephemeral=True
+        )
+        return
+    if count > 120:
+        await interaction.response.send_message("Count cannot be more than 120", ephemeral=True)
+        return
+    guild_id = interaction.guild_id
+    command_name = "autofeed" # using autofeed command name so /admin cancel works on this too
+    task = asyncio.create_task(bias_autofeed_command(interaction, scope, interval, count))
+    if guild_id not in bot.active_commands:
+        bot.active_commands[guild_id] = {}
+    if command_name not in bot.active_commands[guild_id]:
+        bot.active_commands[guild_id][command_name] = []
+    bot.active_commands[guild_id][command_name].append(task)
+
+    try:
+        await task
+    finally:
+        bot.active_commands[guild_id][command_name].remove(task)
+        add_stat_count("bias_autofeed")
+
+
+async def bias_autofeed_command(
+    interaction: discord.Interaction, scope: str, interval: int, count: int
+):
+    await interaction.response.defer(thinking=True)
+    min_age = get_min_age(interaction.guild_id)
+
+    if scope == "global":
+        tops = await asyncio.to_thread(get_global_leaderboard, 15)
+    elif scope == "server":
+        tops = await asyncio.to_thread(get_guild_leaderboard, interaction.guild_id, 15)
+    else:
+        tops = await asyncio.to_thread(get_personal_leaderboard, interaction.user.id, 15)
+
+    if not tops:
+        text = f"Could not find any {scope} bias rankings. Try voting with `/bias vote` first!"
+        print(text)
+        message = await interaction.followup.send(content=text, wait=True)
+        await message.delete(delay=30)
+        return
+
+    # Exponential weighting: 
+    # Top 3: 100
+    # Top 4-5: 50
+    # Top 6-10: 20
+    # Top 11-15: 2
+    full_weights = [100, 100, 100, 50, 50, 20, 20, 20, 20, 20, 2, 2, 2, 2, 2]
+    weights = full_weights[:len(tops)]
+    
+    # role_id is the first element
+    top_roles = [top[0] for top in tops]
+    
+    # Pick randomly with weights and replacement
+    role_ids = random.choices(top_roles, weights=weights, k=count)
+
+    role_ids_and_urls = get_random_link_for_each_role(role_ids=role_ids, min_age=min_age)
+
+    # One retry attempt incase a role had a full recently sent queue
+    if not role_ids_and_urls or len(role_ids_and_urls) != count:
+        role_ids_and_urls = get_random_link_for_each_role(role_ids=role_ids, min_age=min_age)
+
+    # Proceed only if we got more than half of the count urls
+    if not role_ids_and_urls or len(role_ids_and_urls) < count // 2:
+        text = "Could not find enough pieces of content"
+        print(text)
+        message = await interaction.followup.send(content=text, wait=True)
+        await message.delete(delay=30)
+        return
+
+    text = (
+        f"Starting {scope} bias feed!\n"
+        + f"Found `{len(role_ids_and_urls)}` ingredient(s) serving every `{interval}` seconds.\n"
+        + f"We hope you enjoy your meal {TSUKI_NOM}"
+    )
+    try:
+        await interaction.followup.send(content=text)
+    except Exception as e:
+        print(e)
+        return
+
+    message = await interaction.original_response()
+
+    text_parts = []
+    tasks: list[asyncio.Task] = []
+    try:
+        for role_id, url in role_ids_and_urls:
+            await asyncio.shield(perform_autofeed_critical_operations(message, url, role_id, tasks))
+            if url != role_ids_and_urls[-1][1]:
+                await asyncio.sleep(interval)
+
+    except asyncio.CancelledError:
+        text_parts.append("An admin has cancelled this autofeed session.")
+    finally:
+        text_parts.append(f"Thank you for choosing Fukutomi Diner {TSUKI_HARAM_HUG}")
+        await message.reply(" ".join(text_parts))
+        await asyncio.shield(asyncio.gather(*tasks))
 
 
 @discord.app_commands.default_permissions(manage_messages=True)
