@@ -19,7 +19,7 @@ class VoteSummaryEmbed(discord.Embed):
         voter_icon_url: str | None = None,
     ):
         """
-        matchups contains: (winner_name, loser_name, winner_group, loser_group, winner_global_delta)
+        matchups contains: (selected_name, unselected_name, selected_group, unselected_group, selected_personal_delta)
         """
         super().__init__(
             title="Bias Rater Session Summary",
@@ -28,17 +28,15 @@ class VoteSummaryEmbed(discord.Embed):
         if voter_name:
             self.set_author(name=voter_name, icon_url=voter_icon_url)
         description_lines = []
-        for i, (w_name, l_name, w_group, l_group, w_delta) in enumerate(matchups, 1):
-            w_disp = f"**{w_name}** ({w_group})"
-            l_disp = f"{l_name} ({l_group})"
-            description_lines.append(f"**{i}.** {w_disp} vs {l_disp} ➔ **{w_name}** (+{w_delta})")
+        for i, (s_name, u_name, s_group, u_group, _) in enumerate(matchups, 1):
+            s_disp = f"**{s_name}** ({s_group})"
+            u_disp = f"{u_name} ({u_group})"
+            description_lines.append(f"**{i}.** {s_disp} vs {u_disp}")
 
         self.description = "\n".join(description_lines) if description_lines else "No votes cast."
 
 
-def build_round_embeds(
-    left_idol, right_idol, round_num: int
-) -> list[discord.Embed]:
+def build_round_embeds(left_idol, right_idol, round_num: int) -> list[discord.Embed]:
     # idol = (role_id, member_name, group_name, global_elo, image_url)
     header = discord.Embed(
         title=f"Head to Head (Round {round_num})",
@@ -90,19 +88,17 @@ def build_leaderboard_embeds(
     return embeds
 
 
-def build_result_embed(
-    winner, loser, gw: int, gl: int, sw: int, sl: int, pw: int, pl: int
-) -> discord.Embed:
+def build_result_embed(selected, unselected, pw: int, pl: int) -> discord.Embed:
     embed = discord.Embed(
-        title=f"{winner[1]} won!",
-        description=f"**{winner[1]}** ({winner[2]}) over {loser[1]} ({loser[2]})",
+        title=f"You chose {selected[1]}!",
+        description=f"**{selected[1]}** ({selected[2]}) over {unselected[1]} ({unselected[2]})",
         color=discord.Color.green(),
     )
-    embed.add_field(name="Global ELO", value=f"Winner: +{gw} | Loser: {gl}", inline=False)
-    embed.add_field(name="Server ELO", value=f"Winner: +{sw} | Loser: {sl}", inline=False)
-    embed.add_field(name="Personal ELO", value=f"Winner: +{pw} | Loser: {pl}", inline=False)
-    if winner[4]:
-        embed.set_image(url=winner[4])
+    embed.add_field(
+        name="Personal Bias Score", value=f"Selected: +{pw} | Unselected: {pl}", inline=False
+    )
+    if selected[4]:
+        embed.set_image(url=selected[4])
     return embed
 
 
@@ -122,9 +118,7 @@ class VoteView(discord.ui.View):
         self.matchups_log = matchups_log or []
 
         self.left_idol, self.right_idol = matchup[0], matchup[1]
-        self.embeds = build_round_embeds(
-            self.left_idol, self.right_idol, self.current_round
-        )
+        self.embeds = build_round_embeds(self.left_idol, self.right_idol, self.current_round)
 
     @classmethod
     async def create(
@@ -159,7 +153,7 @@ class VoteView(discord.ui.View):
                     content = "Session timed out! Summary posted."
                 else:
                     content = "Session timed out, likely discord issue! Start another session to continue!"
-                
+
                 await self.interaction.edit_original_response(
                     content=content,
                     embeds=[],
@@ -197,8 +191,8 @@ class VoteView(discord.ui.View):
                 pass
 
         # 0 = left, 1 = right
-        winner = self.left_idol if winner_idx == 0 else self.right_idol
-        loser = self.right_idol if winner_idx == 0 else self.left_idol
+        selected = self.left_idol if winner_idx == 0 else self.right_idol
+        unselected = self.right_idol if winner_idx == 0 else self.left_idol
 
         # Disable buttons
         for item in self.children:
@@ -209,13 +203,13 @@ class VoteView(discord.ui.View):
 
         # Process ELO (sync DB work pushed to a worker thread)
         gw, gl, sw, sl, pw, pl = await asyncio.to_thread(
-            record_vote, self.user_id, self.guild_id, winner[0], loser[0]
+            record_vote, self.user_id, self.guild_id, selected[0], unselected[0]
         )
         await asyncio.to_thread(add_stat_count, "bias_vote_cast")
-        self.matchups_log.append((winner[1], loser[1], winner[2], loser[2], gw))
+        self.matchups_log.append((selected[1], unselected[1], selected[2], unselected[2], pw))
 
-        # Collapse to a single result embed so the winner's image gets the full frame
-        self.embeds = [build_result_embed(winner, loser, gw, gl, sw, sl, pw, pl)]
+        # Collapse to a single result embed so the selected image gets the full frame
+        self.embeds = [build_result_embed(selected, unselected, pw, pl)]
         await interaction.edit_original_response(embeds=self.embeds, view=self)
 
         await asyncio.sleep(1.5)
