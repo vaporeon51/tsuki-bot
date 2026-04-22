@@ -36,6 +36,12 @@ from src.db.utils import (
 from src.llm_chat import get_llm_chat_response
 from src.reaction.gather import gather_dead_link, gather_reactions
 from src.reddit_feeds import update_reddit_feeds
+from src.discord_ui.bias_rater import VoteView
+from src.db.bias_rater import (
+    get_global_leaderboard,
+    get_guild_leaderboard,
+    get_personal_leaderboard,
+)
 
 TOKEN = os.environ.get("TOKEN")
 
@@ -53,6 +59,7 @@ class TsukiBot(commands.Bot):
         self.tree.add_command(Admin())
         self.tree.add_command(BirthdayFeed())
         self.tree.add_command(RedditFeed())
+        self.tree.add_command(BiasRater())
         asyncio.create_task(self.custom_event_handler())
 
     async def custom_event_handler(self):
@@ -499,6 +506,65 @@ class Admin(discord.app_commands.Group):
         add_stat_count("set_age_limit")
 
 
+@discord.app_commands.guild_only()
+class BiasRater(discord.app_commands.Group):
+    def __init__(self):
+        super().__init__(name="bias", description="Commands for head-to-head idol voting")
+
+    @discord.app_commands.command(name="vote", description="Vote head-to-head for idols")
+    @discord.app_commands.describe(rounds="Number of rounds to vote (default 1, max 10)")
+    async def vote(self, interaction: discord.Interaction, rounds: int = 1):
+        if rounds < 1 or rounds > 10:
+            await interaction.response.send_message(
+                "Rounds must be between 1 and 10", ephemeral=True
+            )
+            return
+
+        try:
+            view = await VoteView.create(
+                user_id=interaction.user.id,
+                guild_id=interaction.guild_id,
+                total_rounds=rounds,
+            )
+            await interaction.response.send_message(embeds=view.embeds, view=view, ephemeral=True)
+        except Exception as e:
+            await interaction.response.send_message(
+                f"Could not start voting: {str(e)}", ephemeral=True
+            )
+
+    @discord.app_commands.command(name="leaderboard", description="Show ELO leaderboard")
+    @discord.app_commands.describe(scope="global, server, or personal")
+    @discord.app_commands.choices(
+        scope=[
+            discord.app_commands.Choice(name="Global", value="global"),
+            discord.app_commands.Choice(name="Server", value="server"),
+            discord.app_commands.Choice(name="Personal", value="personal"),
+        ]
+    )
+    async def leaderboard(self, interaction: discord.Interaction, scope: str = "global"):
+        if scope == "global":
+            tops = await asyncio.to_thread(get_global_leaderboard)
+            title = "Global Idol Leaderboard"
+        elif scope == "server":
+            tops = await asyncio.to_thread(get_guild_leaderboard, interaction.guild_id)
+            title = f"Server Leaderboard for {interaction.guild.name}"
+        else:
+            tops = await asyncio.to_thread(get_personal_leaderboard, interaction.user.id)
+            title = f"Personal Leaderboard for {interaction.user.display_name}"
+
+        if not tops:
+            await interaction.response.send_message("No votes recorded yet!", ephemeral=True)
+            return
+
+        embed = discord.Embed(title=title, color=discord.Color.gold())
+        lines = []
+        for i, (name, group, elo) in enumerate(tops, 1):
+            lines.append(f"**{i}.** {name} ({group}) - **{elo}**")
+
+        embed.description = "\n".join(lines)
+        await interaction.response.send_message(embed=embed)
+
+
 async def is_trigger_message(message):
     # Ignore messages from the bot itself
     if message.author == bot.user:
@@ -520,44 +586,45 @@ async def is_trigger_message(message):
     return False
 
 
-@bot.event
-async def on_message(message):
-    if await is_trigger_message(message):
-        try:
-            channel = message.channel
+# # Disabling for now until LLM and prompt and emoji stuff are all sorted out
+# @bot.event
+# async def on_message(message):
+#     if await is_trigger_message(message):
+#         try:
+#             channel = message.channel
 
-            # Fetch message history (10 messages before the mentioned message)
-            messages = []
-            async for msg in channel.history(limit=20, before=message):
-                messages.append(msg)
+#             # Fetch message history (10 messages before the mentioned message)
+#             messages = []
+#             async for msg in channel.history(limit=20, before=message):
+#                 messages.append(msg)
 
-            # Add the mentioned message to the list and reverse for chronological order
-            messages.reverse()
-            messages.append(message)
+#             # Add the mentioned message to the list and reverse for chronological order
+#             messages.reverse()
+#             messages.append(message)
 
-            # Format messages with display name and username
-            formatted_messages = []
-            for msg in messages:
-                if content := msg.clean_content:
-                    formatted = f"{msg.author.display_name} (@{msg.author.name}): " f"{content}"
-                    formatted_messages.append(formatted)
-            all_messages = "\n".join(formatted_messages)
-            responses = get_llm_chat_response(all_messages)
+#             # Format messages with display name and username
+#             formatted_messages = []
+#             for msg in messages:
+#                 if content := msg.clean_content:
+#                     formatted = f"{msg.author.display_name} (@{msg.author.name}): {content}"
+#                     formatted_messages.append(formatted)
+#             all_messages = "\n".join(formatted_messages)
+#             responses = get_llm_chat_response(all_messages)
 
-            # Send each response separately
-            for i, response in enumerate(responses):
-                message = await channel.send(response)
-                # Any response after the first one must be a content link so check if its broken
-                if i > 0:
-                    await gather_dead_link(message, response)
+#             # Send each response separately
+#             for i, response in enumerate(responses):
+#                 message = await channel.send(response)
+#                 # Any response after the first one must be a content link so check if its broken
+#                 if i > 0:
+#                     await gather_dead_link(message, response)
 
-            add_stat_count("llm_response")
+#             add_stat_count("llm_response")
 
-        except Exception as e:
-            await channel.send(f"Sorry, I encountered an error: {str(e)}")
+#         except Exception as e:
+#             await channel.send(f"Sorry, I encountered an error: {str(e)}")
 
-    # Process other commands
-    await bot.process_commands(message)
+#     # Process other commands
+#     await bot.process_commands(message)
 
 
 bot.run(TOKEN)
