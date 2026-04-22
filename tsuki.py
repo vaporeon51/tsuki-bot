@@ -532,7 +532,7 @@ class BirthdayFeed(discord.app_commands.Group):
 @discord.app_commands.guild_only()
 class Admin(discord.app_commands.Group):
     def __init__(self):
-        super().__init__(name="admin", description="Commands for managing TsukiBot")
+        super().__init__(name="admin", description="Commands for managing HanniBot")
         return
 
     @discord.app_commands.command(
