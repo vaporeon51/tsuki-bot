@@ -5,6 +5,13 @@ import psycopg
 
 from . import CONN_DICT
 
+# Only idols with both a member name and an image_url participate in matchups/leaderboards.
+# All queries alias role_info as `r` so this predicate is reusable without string surgery.
+_ACTIVE_IDOL_PREDICATE = (
+    "r.member_name IS NOT NULL AND TRIM(r.member_name) != '' "
+    "AND r.image_url IS NOT NULL AND TRIM(r.image_url) != ''"
+)
+
 
 def calculate_elo_delta(winner_elo: int, loser_elo: int, k: int = 32) -> Tuple[int, int]:
     """Calculate the expected ELO shift for a win/loss."""
@@ -24,12 +31,12 @@ def get_matchup(user_id: int) -> list[tuple[str, str, str, int, str]] | None:
     """
     with psycopg.connect(**CONN_DICT) as conn:
         with conn.cursor() as cur:
-            # 1. Pick a random idol A with non-empty member_name
+            # 1. Pick a random active idol A
             cur.execute(
-                """
-                SELECT role_id, member_name, group_name, global_elo, image_url
-                FROM role_info
-                WHERE member_name IS NOT NULL AND TRIM(member_name) != ''
+                f"""
+                SELECT r.role_id, r.member_name, r.group_name, r.global_elo, r.image_url
+                FROM role_info r
+                WHERE {_ACTIVE_IDOL_PREDICATE}
                 ORDER BY RANDOM()
                 LIMIT 1;
                 """
@@ -43,15 +50,12 @@ def get_matchup(user_id: int) -> list[tuple[str, str, str, int, str]] | None:
 
             # 2. Find a close opponent B within +/- 150 ELO
             cur.execute(
-                """
-                WITH close_matches AS (
-                    SELECT role_id, member_name, group_name, global_elo, image_url
-                    FROM role_info
-                    WHERE role_id != %s
-                      AND member_name IS NOT NULL AND TRIM(member_name) != ''
-                      AND global_elo BETWEEN %s AND %s
-                )
-                SELECT * FROM close_matches
+                f"""
+                SELECT r.role_id, r.member_name, r.group_name, r.global_elo, r.image_url
+                FROM role_info r
+                WHERE r.role_id != %s
+                  AND {_ACTIVE_IDOL_PREDICATE}
+                  AND r.global_elo BETWEEN %s AND %s
                 ORDER BY RANDOM()
                 LIMIT 1;
                 """,
@@ -62,11 +66,11 @@ def get_matchup(user_id: int) -> list[tuple[str, str, str, int, str]] | None:
             # If no close match found, just pick any random opponent
             if not idol_b:
                 cur.execute(
-                    """
-                    SELECT role_id, member_name, group_name, global_elo, image_url
-                    FROM role_info
-                    WHERE role_id != %s
-                      AND member_name IS NOT NULL AND TRIM(member_name) != ''
+                    f"""
+                    SELECT r.role_id, r.member_name, r.group_name, r.global_elo, r.image_url
+                    FROM role_info r
+                    WHERE r.role_id != %s
+                      AND {_ACTIVE_IDOL_PREDICATE}
                     ORDER BY RANDOM()
                     LIMIT 1;
                     """,
@@ -193,11 +197,11 @@ def get_global_leaderboard(limit: int = 10) -> list[tuple[str, str, int]]:
     with psycopg.connect(**CONN_DICT) as conn:
         with conn.cursor() as cur:
             cur.execute(
-                """
-                SELECT member_name, group_name, global_elo
-                FROM role_info
-                WHERE member_name IS NOT NULL AND TRIM(member_name) != ''
-                ORDER BY global_elo DESC
+                f"""
+                SELECT r.member_name, r.group_name, r.global_elo
+                FROM role_info r
+                WHERE {_ACTIVE_IDOL_PREDICATE}
+                ORDER BY r.global_elo DESC
                 LIMIT %s;
                 """,
                 (limit,),
@@ -210,11 +214,11 @@ def get_guild_leaderboard(guild_id: int, limit: int = 10) -> list[tuple[str, str
     with psycopg.connect(**CONN_DICT) as conn:
         with conn.cursor() as cur:
             cur.execute(
-                """
+                f"""
                 SELECT r.member_name, r.group_name, g.guild_elo
                 FROM guild_elo g
                 JOIN role_info r ON g.role_id = r.role_id
-                WHERE g.guild_id = %s AND r.member_name IS NOT NULL AND TRIM(r.member_name) != ''
+                WHERE g.guild_id = %s AND {_ACTIVE_IDOL_PREDICATE}
                 ORDER BY g.guild_elo DESC
                 LIMIT %s;
                 """,
@@ -228,11 +232,11 @@ def get_personal_leaderboard(user_id: int, limit: int = 10) -> list[tuple[str, s
     with psycopg.connect(**CONN_DICT) as conn:
         with conn.cursor() as cur:
             cur.execute(
-                """
+                f"""
                 SELECT r.member_name, r.group_name, u.personal_elo
                 FROM user_elo u
                 JOIN role_info r ON u.role_id = r.role_id
-                WHERE u.user_id = %s AND r.member_name IS NOT NULL AND TRIM(r.member_name) != ''
+                WHERE u.user_id = %s AND {_ACTIVE_IDOL_PREDICATE}
                 ORDER BY u.personal_elo DESC
                 LIMIT %s;
                 """,
