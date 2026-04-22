@@ -155,7 +155,13 @@ class VoteView(discord.ui.View):
         else:
             await asyncio.sleep(1.5)
             summary_embed = VoteSummaryEmbed(self.matchups_log)
-            await interaction.edit_original_response(embeds=[summary_embed], view=None)
+            # Post the summary publicly in the channel, then wind down the ephemeral card.
+            await interaction.followup.send(embed=summary_embed)
+            await interaction.edit_original_response(
+                content="Session complete — summary posted.",
+                embeds=[],
+                view=None,
+            )
 
     @discord.ui.button(label="⬅️ Left", style=discord.ButtonStyle.primary)
     async def left_button(self, interaction: discord.Interaction, button: discord.ui.Button):
