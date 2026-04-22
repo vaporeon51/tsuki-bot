@@ -25,28 +25,30 @@ def calculate_elo_delta(winner_elo: int, loser_elo: int, k: int = 32) -> Tuple[i
 
 
 def get_matchup(user_id: int) -> list[tuple[str, str, str, int, str]] | None:
-    """Return two idols with close global ELO (within +/- 150).
+    """Return two idols with close personal ELO.
     Only selects idols that have a non-empty member_name.
-    Returns: list of 2 tuples (role_id, member_name, group_name, global_elo, image_url)
+    Returns: list of 2 tuples (role_id, member_name, group_name, personal_elo, image_url)
     """
     with psycopg.connect(**CONN_DICT) as conn:
         with conn.cursor() as cur:
             # 1. Pick a random active idol A
             cur.execute(
                 f"""
-                SELECT r.role_id, r.member_name, r.group_name, r.global_elo, r.image_url
+                SELECT r.role_id, r.member_name, r.group_name, COALESCE(u.personal_elo, 1200), r.image_url
                 FROM role_info r
+                LEFT JOIN user_elo u ON r.role_id = u.role_id AND u.user_id = %s
                 WHERE {_ACTIVE_IDOL_PREDICATE}
                 ORDER BY RANDOM()
                 LIMIT 1;
-                """
+                """,
+                (user_id,),
             )
             idol_a = cur.fetchone()
 
             if not idol_a:
                 return None
 
-            role_id_a, _, _, global_elo_a, _ = idol_a
+            role_id_a, _, _, personal_elo_a, _ = idol_a
 
             # 2. Pick an opponent B using an exponentially weighted sample based on ELO closeness.
             # We sample items with probability proportional to exp(-MAX(elo_diff - 100, 0) / 100).
@@ -55,14 +57,15 @@ def get_matchup(user_id: int) -> list[tuple[str, str, str, int, str]] | None:
             # it naturally decays to further opponents if there are no close ones.
             cur.execute(
                 f"""
-                SELECT r.role_id, r.member_name, r.group_name, r.global_elo, r.image_url
+                SELECT r.role_id, r.member_name, r.group_name, COALESCE(u.personal_elo, 1200), r.image_url
                 FROM role_info r
+                LEFT JOIN user_elo u ON r.role_id = u.role_id AND u.user_id = %s
                 WHERE r.role_id != %s
                   AND {_ACTIVE_IDOL_PREDICATE}
-                ORDER BY -ln(GREATEST(RANDOM(), 1e-10)) * EXP(GREATEST(ABS(r.global_elo - %s) - 100, 0::numeric) / 100.0) ASC
+                ORDER BY -ln(GREATEST(RANDOM(), 1e-10)) * EXP(GREATEST(ABS(COALESCE(u.personal_elo, 1200) - %s) - 100, 0::numeric) / 100.0) ASC
                 LIMIT 1;
                 """,
-                (role_id_a, global_elo_a),
+                (user_id, role_id_a, personal_elo_a),
             )
             idol_b = cur.fetchone()
 
