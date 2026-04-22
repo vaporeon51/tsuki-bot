@@ -363,12 +363,8 @@ async def bias_autofeed_command(
         await message.delete(delay=30)
         return
 
-    # Exponential weighting:
-    # Top 3: 100
-    # Top 4-5: 50
-    # Top 6-10: 20
-    # Top 11-15: 2
-    full_weights = [100, 100, 100, 50, 50, 20, 20, 20, 20, 20, 2, 2, 2, 2, 2]
+    # Weightings for ranks 1-15
+    full_weights = [100, 70, 60, 50, 40, 30, 20, 15, 15, 10, 5, 2, 2, 2, 2]
     weights = full_weights[: len(tops)]
 
     # role_id is the first element
