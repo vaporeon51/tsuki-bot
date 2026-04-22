@@ -37,11 +37,11 @@ class VoteSummaryEmbed(discord.Embed):
 
 
 def build_round_embeds(
-    left_idol, right_idol, round_num: int, total_rounds: int
+    left_idol, right_idol, round_num: int
 ) -> list[discord.Embed]:
     # idol = (role_id, member_name, group_name, global_elo, image_url)
     header = discord.Embed(
-        title=f"Head to Head (Round {round_num}/{total_rounds})",
+        title=f"Head to Head (Round {round_num})",
         description=(
             f"⬅️ **{left_idol[1]}** ({left_idol[2]})\n"
             f"➡️ **{right_idol[1]}** ({right_idol[2]})\n\n"
@@ -111,7 +111,6 @@ class VoteView(discord.ui.View):
         self,
         user_id: int,
         guild_id: int,
-        total_rounds: int,
         matchup,
         current_round: int = 1,
         matchups_log: list | None = None,
@@ -119,13 +118,12 @@ class VoteView(discord.ui.View):
         super().__init__(timeout=10.0)
         self.user_id = user_id
         self.guild_id = guild_id
-        self.total_rounds = total_rounds
         self.current_round = current_round
         self.matchups_log = matchups_log or []
 
         self.left_idol, self.right_idol = matchup[0], matchup[1]
         self.embeds = build_round_embeds(
-            self.left_idol, self.right_idol, self.current_round, self.total_rounds
+            self.left_idol, self.right_idol, self.current_round
         )
 
     @classmethod
@@ -133,7 +131,6 @@ class VoteView(discord.ui.View):
         cls,
         user_id: int,
         guild_id: int,
-        total_rounds: int,
         current_round: int = 1,
         matchups_log: list | None = None,
     ) -> "VoteView":
@@ -141,7 +138,7 @@ class VoteView(discord.ui.View):
         matchup = await asyncio.to_thread(get_matchup, user_id)
         if not matchup:
             raise ValueError("Not enough idols to match up!")
-        return cls(user_id, guild_id, total_rounds, matchup, current_round, matchups_log)
+        return cls(user_id, guild_id, matchup, current_round, matchups_log)
 
     async def on_timeout(self) -> None:
         if getattr(self, "_answered", False):
@@ -152,8 +149,19 @@ class VoteView(discord.ui.View):
 
         if hasattr(self, "interaction"):
             try:
+                if self.matchups_log:
+                    summary_embed = VoteSummaryEmbed(
+                        self.matchups_log,
+                        voter_name=self.interaction.user.display_name,
+                        voter_icon_url=self.interaction.user.display_avatar.url,
+                    )
+                    await self.interaction.channel.send(embed=summary_embed)
+                    content = "Session timed out! Summary posted."
+                else:
+                    content = "Session timed out, likely discord issue! Start another session to continue!"
+                
                 await self.interaction.edit_original_response(
-                    content="Session timed out, likely discord issue! Start another session to continue!",
+                    content=content,
                     embeds=[],
                     view=None,
                 )
@@ -216,30 +224,14 @@ class VoteView(discord.ui.View):
     async def _advance(self, interaction: discord.Interaction) -> None:
         """Hand off to the next round or emit the final summary.
         Assumes the interaction has already been deferred/ack'd."""
-        if self.current_round < self.total_rounds:
-            next_view = await VoteView.create(
-                self.user_id,
-                self.guild_id,
-                self.total_rounds,
-                self.current_round + 1,
-                self.matchups_log,
-            )
-            next_view.interaction = interaction
-            await interaction.edit_original_response(embeds=next_view.embeds, view=next_view)
-        else:
-            summary_embed = VoteSummaryEmbed(
-                self.matchups_log,
-                voter_name=interaction.user.display_name,
-                voter_icon_url=interaction.user.display_avatar.url,
-            )
-            # Post as a standalone channel message (not via interaction.followup)
-            # so it doesn't render as a reply to the ephemeral voting card.
-            await interaction.channel.send(embed=summary_embed)
-            await interaction.edit_original_response(
-                content="Session complete — summary posted.",
-                embeds=[],
-                view=None,
-            )
+        next_view = await VoteView.create(
+            self.user_id,
+            self.guild_id,
+            self.current_round + 1,
+            self.matchups_log,
+        )
+        next_view.interaction = interaction
+        await interaction.edit_original_response(embeds=next_view.embeds, view=next_view)
 
     @discord.ui.button(label="⬅️ Left", style=discord.ButtonStyle.primary)
     async def left_button(self, interaction: discord.Interaction, button: discord.ui.Button):

@@ -586,14 +586,7 @@ class BiasRater(discord.app_commands.Group):
         super().__init__(name="bias", description="Commands for head-to-head idol voting")
 
     @discord.app_commands.command(name="vote", description="Vote head-to-head for idols")
-    @discord.app_commands.describe(rounds="Number of rounds to vote (default 1, max 10)")
-    async def vote(self, interaction: discord.Interaction, rounds: int = 1):
-        if rounds < 1 or rounds > 10:
-            await interaction.response.send_message(
-                "Rounds must be between 1 and 10", ephemeral=True
-            )
-            return
-
+    async def vote(self, interaction: discord.Interaction):
         # Ack immediately so Discord's 3s interaction deadline doesn't expire
         # while VoteView.create does its DB round-trip on a possibly-cold connection.
         await interaction.response.defer(ephemeral=True, thinking=True)
@@ -601,7 +594,6 @@ class BiasRater(discord.app_commands.Group):
             view = await VoteView.create(
                 user_id=interaction.user.id,
                 guild_id=interaction.guild_id,
-                total_rounds=rounds,
             )
             view.interaction = interaction
             await interaction.edit_original_response(embeds=view.embeds, view=view)
