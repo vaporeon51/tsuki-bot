@@ -43,8 +43,8 @@ def build_round_embeds(
     header = discord.Embed(
         title=f"Head to Head (Round {round_num}/{total_rounds})",
         description=(
-            f"⬅️ **{left_idol[1]}** ({left_idol[2]}) — ELO {left_idol[3]}\n"
-            f"➡️ **{right_idol[1]}** ({right_idol[2]}) — ELO {right_idol[3]}\n\n"
+            f"⬅️ **{left_idol[1]}** ({left_idol[2]})\n"
+            f"➡️ **{right_idol[1]}** ({right_idol[2]})\n\n"
             "Vote for your bias!"
         ),
         color=discord.Color.blue(),
@@ -158,12 +158,27 @@ class VoteView(discord.ui.View):
                 "This is not your voting session!", ephemeral=True
             )
             return False
+
+        if getattr(self, "_answered", False):
+            # Already answered, quietly ack to avoid Discord showing "Interaction failed"
+            if not interaction.response.is_done():
+                try:
+                    await interaction.response.defer()
+                except discord.errors.InteractionResponded:
+                    pass
+            return False
+
+        self._answered = True
         return True
 
     async def process_vote(self, interaction: discord.Interaction, winner_idx: int):
         # Ack immediately so we don't trip Discord's 3s interaction deadline
         # while record_vote's sync DB work is running in a worker thread.
-        await interaction.response.defer()
+        if not interaction.response.is_done():
+            try:
+                await interaction.response.defer()
+            except discord.errors.InteractionResponded:
+                pass
 
         # 0 = left, 1 = right
         winner = self.left_idol if winner_idx == 0 else self.right_idol
@@ -224,7 +239,11 @@ class VoteView(discord.ui.View):
 
     @discord.ui.button(label="Skip", style=discord.ButtonStyle.secondary, emoji="⏭️")
     async def skip_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.defer()
+        if not interaction.response.is_done():
+            try:
+                await interaction.response.defer()
+            except discord.errors.InteractionResponded:
+                pass
         for item in self.children:
             item.disabled = True
         await self._advance(interaction)
