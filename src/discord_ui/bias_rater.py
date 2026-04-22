@@ -184,9 +184,13 @@ class VoteView(discord.ui.View):
         self.embeds = [build_result_embed(winner, loser, gw, gl, sw, sl, pw, pl)]
         await interaction.edit_original_response(embeds=self.embeds, view=self)
 
-        # Trigger next round or summary
+        await asyncio.sleep(1.5)
+        await self._advance(interaction)
+
+    async def _advance(self, interaction: discord.Interaction) -> None:
+        """Hand off to the next round or emit the final summary.
+        Assumes the interaction has already been deferred/ack'd."""
         if self.current_round < self.total_rounds:
-            await asyncio.sleep(1.5)
             next_view = await VoteView.create(
                 self.user_id,
                 self.guild_id,
@@ -196,7 +200,6 @@ class VoteView(discord.ui.View):
             )
             await interaction.edit_original_response(embeds=next_view.embeds, view=next_view)
         else:
-            await asyncio.sleep(1.5)
             summary_embed = VoteSummaryEmbed(
                 self.matchups_log,
                 voter_name=interaction.user.display_name,
@@ -218,3 +221,10 @@ class VoteView(discord.ui.View):
     @discord.ui.button(label="➡️ Right", style=discord.ButtonStyle.primary)
     async def right_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self.process_vote(interaction, 1)
+
+    @discord.ui.button(label="Skip", style=discord.ButtonStyle.secondary, emoji="⏭️")
+    async def skip_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer()
+        for item in self.children:
+            item.disabled = True
+        await self._advance(interaction)
