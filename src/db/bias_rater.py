@@ -48,35 +48,23 @@ def get_matchup(user_id: int) -> list[tuple[str, str, str, int, str]] | None:
 
             role_id_a, _, _, global_elo_a, _ = idol_a
 
-            # 2. Find a close opponent B within +/- 150 ELO
+            # 2. Pick an opponent B using an exponentially weighted sample based on ELO closeness.
+            # We sample items with probability proportional to exp(-MAX(elo_diff - 100, 0) / 100).
+            # This creates a "flat" probability distribution for anyone within 100 ELO,
+            # ensuring they all have an equal uniform chance of being picked. Outside of 100 ELO,
+            # it naturally decays to further opponents if there are no close ones.
             cur.execute(
                 f"""
                 SELECT r.role_id, r.member_name, r.group_name, r.global_elo, r.image_url
                 FROM role_info r
                 WHERE r.role_id != %s
                   AND {_ACTIVE_IDOL_PREDICATE}
-                  AND r.global_elo BETWEEN %s AND %s
-                ORDER BY RANDOM()
+                ORDER BY -ln(GREATEST(RANDOM(), 1e-10)) * EXP(GREATEST(ABS(r.global_elo - %s) - 100, 0::numeric) / 100.0) ASC
                 LIMIT 1;
                 """,
-                (role_id_a, global_elo_a - 150, global_elo_a + 150),
+                (role_id_a, global_elo_a),
             )
             idol_b = cur.fetchone()
-
-            # If no close match found, just pick any random opponent
-            if not idol_b:
-                cur.execute(
-                    f"""
-                    SELECT r.role_id, r.member_name, r.group_name, r.global_elo, r.image_url
-                    FROM role_info r
-                    WHERE r.role_id != %s
-                      AND {_ACTIVE_IDOL_PREDICATE}
-                    ORDER BY RANDOM()
-                    LIMIT 1;
-                    """,
-                    (role_id_a,),
-                )
-                idol_b = cur.fetchone()
 
             if not idol_b:
                 return None  # Only 1 idol exists in DB
