@@ -192,13 +192,13 @@ def record_vote(
             return gw_delta, gl_delta, sw_delta, sl_delta, pw_delta, pl_delta
 
 
-def get_global_leaderboard(limit: int = 10) -> list[tuple[str, str, int]]:
-    """Returns top idols by global ELO (member_name, group_name, global_elo)."""
+def get_global_leaderboard(limit: int = 10) -> list[tuple[str, str, int, str]]:
+    """Returns top idols by global ELO (member_name, group_name, global_elo, image_url)."""
     with psycopg.connect(**CONN_DICT) as conn:
         with conn.cursor() as cur:
             cur.execute(
                 f"""
-                SELECT r.member_name, r.group_name, r.global_elo
+                SELECT r.member_name, r.group_name, r.global_elo, r.image_url
                 FROM role_info r
                 WHERE {_ACTIVE_IDOL_PREDICATE}
                 ORDER BY r.global_elo DESC
@@ -209,13 +209,13 @@ def get_global_leaderboard(limit: int = 10) -> list[tuple[str, str, int]]:
             return cur.fetchall()
 
 
-def get_guild_leaderboard(guild_id: int, limit: int = 10) -> list[tuple[str, str, int]]:
-    """Returns top idols by guild ELO for a server (member_name, group_name, guild_elo)."""
+def get_guild_leaderboard(guild_id: int, limit: int = 10) -> list[tuple[str, str, int, str]]:
+    """Returns top idols by guild ELO for a server (member_name, group_name, guild_elo, image_url)."""
     with psycopg.connect(**CONN_DICT) as conn:
         with conn.cursor() as cur:
             cur.execute(
                 f"""
-                SELECT r.member_name, r.group_name, g.guild_elo
+                SELECT r.member_name, r.group_name, g.guild_elo, r.image_url
                 FROM guild_elo g
                 JOIN role_info r ON g.role_id = r.role_id
                 WHERE g.guild_id = %s AND {_ACTIVE_IDOL_PREDICATE}
@@ -227,13 +227,13 @@ def get_guild_leaderboard(guild_id: int, limit: int = 10) -> list[tuple[str, str
             return cur.fetchall()
 
 
-def get_personal_leaderboard(user_id: int, limit: int = 10) -> list[tuple[str, str, int]]:
-    """Returns top idols by personal ELO for a user (member_name, group_name, personal_elo)."""
+def get_personal_leaderboard(user_id: int, limit: int = 10) -> list[tuple[str, str, int, str]]:
+    """Returns top idols by personal ELO for a user (member_name, group_name, personal_elo, image_url)."""
     with psycopg.connect(**CONN_DICT) as conn:
         with conn.cursor() as cur:
             cur.execute(
                 f"""
-                SELECT r.member_name, r.group_name, u.personal_elo
+                SELECT r.member_name, r.group_name, u.personal_elo, r.image_url
                 FROM user_elo u
                 JOIN role_info r ON u.role_id = r.role_id
                 WHERE u.user_id = %s AND {_ACTIVE_IDOL_PREDICATE}

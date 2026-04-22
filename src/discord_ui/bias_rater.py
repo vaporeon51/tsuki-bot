@@ -52,6 +52,36 @@ def build_round_embeds(
     return [header, right]
 
 
+def build_leaderboard_embeds(
+    title: str, tops: list[tuple[str, str, int, str]]
+) -> list[discord.Embed]:
+    """Header embed with the ranked list + #1 image, plus gallery embeds for #2 and #3."""
+    medals = {1: "🥇", 2: "🥈", 3: "🥉"}
+
+    lines = []
+    for rank, (name, group, elo, _) in enumerate(tops, 1):
+        prefix = medals.get(rank, f"**#{rank}**")
+        lines.append(f"{prefix}  **{name}** · {group} — **{elo}**")
+
+    header = discord.Embed(
+        title=f"🏆 {title}",
+        description="\n".join(lines) if lines else "No entries yet.",
+        color=discord.Color.gold(),
+        url=_EMBED_GROUP_URL,
+    )
+    if tops and tops[0][3]:
+        header.set_image(url=tops[0][3])
+
+    embeds = [header]
+    for rank in (2, 3):
+        if len(tops) >= rank and tops[rank - 1][3]:
+            podium = discord.Embed(url=_EMBED_GROUP_URL)
+            podium.set_image(url=tops[rank - 1][3])
+            embeds.append(podium)
+
+    return embeds
+
+
 def build_result_embed(
     winner, loser, gw: int, gl: int, sw: int, sl: int, pw: int, pl: int
 ) -> discord.Embed:

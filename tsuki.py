@@ -36,7 +36,7 @@ from src.db.utils import (
 from src.llm_chat import get_llm_chat_response
 from src.reaction.gather import gather_dead_link, gather_reactions
 from src.reddit_feeds import update_reddit_feeds
-from src.discord_ui.bias_rater import VoteView
+from src.discord_ui.bias_rater import VoteView, build_leaderboard_embeds
 from src.db.bias_rater import (
     get_global_leaderboard,
     get_guild_leaderboard,
@@ -556,13 +556,8 @@ class BiasRater(discord.app_commands.Group):
             await interaction.response.send_message("No votes recorded yet!", ephemeral=True)
             return
 
-        embed = discord.Embed(title=title, color=discord.Color.gold())
-        lines = []
-        for i, (name, group, elo) in enumerate(tops, 1):
-            lines.append(f"**{i}.** {name} ({group}) - **{elo}**")
-
-        embed.description = "\n".join(lines)
-        await interaction.response.send_message(embed=embed)
+        embeds = build_leaderboard_embeds(title, tops)
+        await interaction.response.send_message(embeds=embeds)
 
 
 async def is_trigger_message(message):
