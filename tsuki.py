@@ -520,17 +520,18 @@ class BiasRater(discord.app_commands.Group):
             )
             return
 
+        # Ack immediately so Discord's 3s interaction deadline doesn't expire
+        # while VoteView.create does its DB round-trip on a possibly-cold connection.
+        await interaction.response.defer(ephemeral=True, thinking=True)
         try:
             view = await VoteView.create(
                 user_id=interaction.user.id,
                 guild_id=interaction.guild_id,
                 total_rounds=rounds,
             )
-            await interaction.response.send_message(embeds=view.embeds, view=view, ephemeral=True)
+            await interaction.edit_original_response(embeds=view.embeds, view=view)
         except Exception as e:
-            await interaction.response.send_message(
-                f"Could not start voting: {str(e)}", ephemeral=True
-            )
+            await interaction.edit_original_response(content=f"Could not start voting: {str(e)}")
         add_stat_count("bias_vote")
 
     @discord.app_commands.command(name="leaderboard", description="Show ELO leaderboard")
@@ -543,6 +544,8 @@ class BiasRater(discord.app_commands.Group):
         ]
     )
     async def leaderboard(self, interaction: discord.Interaction, scope: str = "global"):
+        # Ack first; the DB query below can exceed Discord's 3s deadline on a cold connection.
+        await interaction.response.defer()
         if scope == "global":
             tops = await asyncio.to_thread(get_global_leaderboard)
             title = "Global Idol Leaderboard"
@@ -554,11 +557,11 @@ class BiasRater(discord.app_commands.Group):
             title = f"Personal Leaderboard for {interaction.user.display_name}"
 
         if not tops:
-            await interaction.response.send_message("No votes recorded yet!", ephemeral=True)
+            await interaction.edit_original_response(content="No votes recorded yet!")
             return
 
         embeds = build_leaderboard_embeds(title, tops)
-        await interaction.response.send_message(embeds=embeds)
+        await interaction.edit_original_response(embeds=embeds)
         add_stat_count("bias_leaderboard")
 
 
