@@ -574,44 +574,45 @@ async def is_trigger_message(message):
     return False
 
 
-@bot.event
-async def on_message(message):
-    if await is_trigger_message(message):
-        try:
-            channel = message.channel
+# # Disabling for now until LLM and prompt and emoji stuff are all sorted out
+# @bot.event
+# async def on_message(message):
+#     if await is_trigger_message(message):
+#         try:
+#             channel = message.channel
 
-            # Fetch message history (10 messages before the mentioned message)
-            messages = []
-            async for msg in channel.history(limit=20, before=message):
-                messages.append(msg)
+#             # Fetch message history (10 messages before the mentioned message)
+#             messages = []
+#             async for msg in channel.history(limit=20, before=message):
+#                 messages.append(msg)
 
-            # Add the mentioned message to the list and reverse for chronological order
-            messages.reverse()
-            messages.append(message)
+#             # Add the mentioned message to the list and reverse for chronological order
+#             messages.reverse()
+#             messages.append(message)
 
-            # Format messages with display name and username
-            formatted_messages = []
-            for msg in messages:
-                if content := msg.clean_content:
-                    formatted = f"{msg.author.display_name} (@{msg.author.name}): {content}"
-                    formatted_messages.append(formatted)
-            all_messages = "\n".join(formatted_messages)
-            responses = get_llm_chat_response(all_messages)
+#             # Format messages with display name and username
+#             formatted_messages = []
+#             for msg in messages:
+#                 if content := msg.clean_content:
+#                     formatted = f"{msg.author.display_name} (@{msg.author.name}): {content}"
+#                     formatted_messages.append(formatted)
+#             all_messages = "\n".join(formatted_messages)
+#             responses = get_llm_chat_response(all_messages)
 
-            # Send each response separately
-            for i, response in enumerate(responses):
-                message = await channel.send(response)
-                # Any response after the first one must be a content link so check if its broken
-                if i > 0:
-                    await gather_dead_link(message, response)
+#             # Send each response separately
+#             for i, response in enumerate(responses):
+#                 message = await channel.send(response)
+#                 # Any response after the first one must be a content link so check if its broken
+#                 if i > 0:
+#                     await gather_dead_link(message, response)
 
-            add_stat_count("llm_response")
+#             add_stat_count("llm_response")
 
-        except Exception as e:
-            await channel.send(f"Sorry, I encountered an error: {str(e)}")
+#         except Exception as e:
+#             await channel.send(f"Sorry, I encountered an error: {str(e)}")
 
-    # Process other commands
-    await bot.process_commands(message)
+#     # Process other commands
+#     await bot.process_commands(message)
 
 
 bot.run(TOKEN)
