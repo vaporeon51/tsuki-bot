@@ -325,7 +325,7 @@ async def autofeed_command(
     except asyncio.CancelledError:
         text.append("An admin has cancelled this autofeed session.")
     finally:
-        text.append(f"Thank you for choosing Fukutomi Diner {TSUKI_HARAM_HUG}")
+        text.append(f"Thank you for choosing HanniBot {TSUKI_HARAM_HUG}")
         await message.reply(" ".join(text))
         await asyncio.shield(asyncio.gather(*tasks))
 
@@ -415,7 +415,7 @@ async def bias_autofeed_command(
     except asyncio.CancelledError:
         text_parts.append("An admin has cancelled this autofeed session.")
     finally:
-        text_parts.append(f"Thank you for choosing Fukutomi Diner {TSUKI_HARAM_HUG}")
+        text_parts.append(f"Thank you for choosing HanniBot {TSUKI_HARAM_HUG}")
         await message.reply(" ".join(text_parts))
         await asyncio.shield(asyncio.gather(*tasks))
 

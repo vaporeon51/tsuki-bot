@@ -1,6 +1,6 @@
 UPVOTE_EMOTE = "❤️"
 REPORT_EMOTE = "⚠️"
-TSUKI_NOM = "🍱"
+TSUKI_NOM = "🐰"
 TSUKI_HARAM_HUG = "💕"
 
 # Number of seconds to wait before updating db based on reactions
