@@ -123,6 +123,10 @@ class VoteView(discord.ui.View):
         return True
 
     async def process_vote(self, interaction: discord.Interaction, winner_idx: int):
+        # Ack immediately so we don't trip Discord's 3s interaction deadline
+        # while record_vote's sync DB work is running in a worker thread.
+        await interaction.response.defer()
+
         # 0 = left, 1 = right
         winner = self.left_idol if winner_idx == 0 else self.right_idol
         loser = self.right_idol if winner_idx == 0 else self.left_idol
@@ -139,7 +143,7 @@ class VoteView(discord.ui.View):
 
         # Collapse to a single result embed so the winner's image gets the full frame
         self.embeds = [build_result_embed(winner, loser, gw, gl, sw, sl, pw, pl)]
-        await interaction.response.edit_message(embeds=self.embeds, view=self)
+        await interaction.edit_original_response(embeds=self.embeds, view=self)
 
         # Trigger next round or summary
         if self.current_round < self.total_rounds:
@@ -155,8 +159,9 @@ class VoteView(discord.ui.View):
         else:
             await asyncio.sleep(1.5)
             summary_embed = VoteSummaryEmbed(self.matchups_log)
-            # Post the summary publicly in the channel, then wind down the ephemeral card.
-            await interaction.followup.send(embed=summary_embed)
+            # Post as a standalone channel message (not via interaction.followup)
+            # so it doesn't render as a reply to the ephemeral voting card.
+            await interaction.channel.send(embed=summary_embed)
             await interaction.edit_original_response(
                 content="Session complete — summary posted.",
                 embeds=[],
