@@ -531,6 +531,7 @@ class BiasRater(discord.app_commands.Group):
             await interaction.response.send_message(
                 f"Could not start voting: {str(e)}", ephemeral=True
             )
+        add_stat_count("bias_vote")
 
     @discord.app_commands.command(name="leaderboard", description="Show ELO leaderboard")
     @discord.app_commands.describe(scope="global, server, or personal")
@@ -558,6 +559,7 @@ class BiasRater(discord.app_commands.Group):
 
         embeds = build_leaderboard_embeds(title, tops)
         await interaction.response.send_message(embeds=embeds)
+        add_stat_count("bias_leaderboard")
 
 
 async def is_trigger_message(message):

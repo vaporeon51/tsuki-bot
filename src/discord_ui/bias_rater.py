@@ -3,6 +3,7 @@ import asyncio
 import discord
 
 from src.db.bias_rater import get_matchup, record_vote
+from src.db.stats import add_stat_count
 
 # Discord renders multiple embeds that share the same `url` as a single gallery
 # card with their images laid out side-by-side. Any valid, non-empty URL works —
@@ -169,6 +170,7 @@ class VoteView(discord.ui.View):
         gw, gl, sw, sl, pw, pl = await asyncio.to_thread(
             record_vote, self.user_id, self.guild_id, winner[0], loser[0]
         )
+        await asyncio.to_thread(add_stat_count, "bias_vote_cast")
         self.matchups_log.append((winner[1], loser[1], winner[2], loser[2], gw))
 
         # Collapse to a single result embed so the winner's image gets the full frame
