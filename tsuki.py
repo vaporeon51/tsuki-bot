@@ -647,7 +647,7 @@ class BiasRater(discord.app_commands.Group):
         description="Feast on kpop content automatically based on your idol bias rankings",
     )
     @discord.app_commands.describe(
-        scope="Rankings to base feed off of: personal, server, or global",
+        scope="Rankings to base feed off of: personal, server, or global (default: personal)",
         interval="Seconds between posts (default:20, min:2, max:24 hours)",
         count="Number of posts (default:5, max:120)",
     )
