@@ -618,7 +618,7 @@ class BiasRater(discord.app_commands.Group):
             discord.app_commands.Choice(name="Personal", value="personal"),
         ]
     )
-    async def leaderboard(self, interaction: discord.Interaction, scope: str = "global"):
+    async def leaderboard(self, interaction: discord.Interaction, scope: str = "personal"):
         # Ack first; the DB query below can exceed Discord's 3s deadline on a cold connection.
         await interaction.response.defer()
         if scope == "global":
