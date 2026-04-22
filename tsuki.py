@@ -343,51 +343,6 @@ async def perform_autofeed_critical_operations(
     tasks.append(reaction_gathering_task)
 
 
-@bot.tree.command(
-    name="bias_autofeed",
-    description="Feast on kpop content automatically based on your idol bias rankings",
-)
-@discord.app_commands.describe(
-    scope="Rankings to base feed off of: personal, server, or global",
-    interval="Seconds between posts (default:20, min:2, max:24 hours)",
-    count="Number of posts (default:5, max:120)",
-)
-@discord.app_commands.choices(
-    scope=[
-        discord.app_commands.Choice(name="Personal", value="personal"),
-        discord.app_commands.Choice(name="Server", value="server"),
-        discord.app_commands.Choice(name="Global", value="global"),
-    ]
-)
-@discord.app_commands.default_permissions(manage_guild=True)
-@discord.app_commands.guild_only()
-async def bias_autofeed(
-    interaction: discord.Interaction, scope: str = "personal", interval: int = 20, count: int = 5
-):
-    if interval < 2 or interval > 60 * 60 * 24:
-        await interaction.response.send_message(
-            f"Interval must be between 2 seconds and 24 hours ({60 * 60 * 24}).", ephemeral=True
-        )
-        return
-    if count > 120:
-        await interaction.response.send_message("Count cannot be more than 120", ephemeral=True)
-        return
-    guild_id = interaction.guild_id
-    command_name = "autofeed" # using autofeed command name so /admin cancel works on this too
-    task = asyncio.create_task(bias_autofeed_command(interaction, scope, interval, count))
-    if guild_id not in bot.active_commands:
-        bot.active_commands[guild_id] = {}
-    if command_name not in bot.active_commands[guild_id]:
-        bot.active_commands[guild_id][command_name] = []
-    bot.active_commands[guild_id][command_name].append(task)
-
-    try:
-        await task
-    finally:
-        bot.active_commands[guild_id][command_name].remove(task)
-        add_stat_count("bias_autofeed")
-
-
 async def bias_autofeed_command(
     interaction: discord.Interaction, scope: str, interval: int, count: int
 ):
@@ -408,17 +363,17 @@ async def bias_autofeed_command(
         await message.delete(delay=30)
         return
 
-    # Exponential weighting: 
+    # Exponential weighting:
     # Top 3: 100
     # Top 4-5: 50
     # Top 6-10: 20
     # Top 11-15: 2
     full_weights = [100, 100, 100, 50, 50, 20, 20, 20, 20, 20, 2, 2, 2, 2, 2]
-    weights = full_weights[:len(tops)]
-    
+    weights = full_weights[: len(tops)]
+
     # role_id is the first element
     top_roles = [top[0] for top in tops]
-    
+
     # Pick randomly with weights and replacement
     role_ids = random.choices(top_roles, weights=weights, k=count)
 
@@ -686,6 +641,52 @@ class BiasRater(discord.app_commands.Group):
         embeds = build_leaderboard_embeds(title, tops)
         await interaction.edit_original_response(embeds=embeds)
         add_stat_count("bias_leaderboard")
+
+    @discord.app_commands.command(
+        name="autofeed",
+        description="Feast on kpop content automatically based on your idol bias rankings",
+    )
+    @discord.app_commands.describe(
+        scope="Rankings to base feed off of: personal, server, or global",
+        interval="Seconds between posts (default:20, min:2, max:24 hours)",
+        count="Number of posts (default:5, max:120)",
+    )
+    @discord.app_commands.choices(
+        scope=[
+            discord.app_commands.Choice(name="Personal", value="personal"),
+            discord.app_commands.Choice(name="Server", value="server"),
+            discord.app_commands.Choice(name="Global", value="global"),
+        ]
+    )
+    async def autofeed(
+        self,
+        interaction: discord.Interaction,
+        scope: str = "personal",
+        interval: int = 20,
+        count: int = 5,
+    ):
+        if interval < 2 or interval > 60 * 60 * 24:
+            await interaction.response.send_message(
+                f"Interval must be between 2 seconds and 24 hours ({60 * 60 * 24}).", ephemeral=True
+            )
+            return
+        if count > 120:
+            await interaction.response.send_message("Count cannot be more than 120", ephemeral=True)
+            return
+        guild_id = interaction.guild_id
+        command_name = "autofeed"  # using autofeed command name so /admin cancel works on this too
+        task = asyncio.create_task(bias_autofeed_command(interaction, scope, interval, count))
+        if guild_id not in bot.active_commands:
+            bot.active_commands[guild_id] = {}
+        if command_name not in bot.active_commands[guild_id]:
+            bot.active_commands[guild_id][command_name] = []
+        bot.active_commands[guild_id][command_name].append(task)
+
+        try:
+            await task
+        finally:
+            bot.active_commands[guild_id][command_name].remove(task)
+            add_stat_count("bias_autofeed")
 
 
 async def is_trigger_message(message):
