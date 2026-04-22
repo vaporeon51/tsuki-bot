@@ -116,7 +116,7 @@ class VoteView(discord.ui.View):
         current_round: int = 1,
         matchups_log: list | None = None,
     ):
-        super().__init__(timeout=10.0)
+        super().__init__(timeout=20.0)
         self.user_id = user_id
         self.guild_id = guild_id
         self.total_rounds = total_rounds
@@ -150,7 +150,7 @@ class VoteView(discord.ui.View):
         if hasattr(self, "interaction"):
             try:
                 await self.interaction.edit_original_response(
-                    content="Ending session after 10 seconds (blame discord!)",
+                    content="Session timed out, likely discord issue! Start another session to continue!",
                     embeds=[],
                     view=None,
                 )
