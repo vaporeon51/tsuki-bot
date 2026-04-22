@@ -603,6 +603,7 @@ class BiasRater(discord.app_commands.Group):
                 guild_id=interaction.guild_id,
                 total_rounds=rounds,
             )
+            view.interaction = interaction
             await interaction.edit_original_response(embeds=view.embeds, view=view)
         except Exception as e:
             await interaction.edit_original_response(content=f"Could not start voting: {str(e)}")

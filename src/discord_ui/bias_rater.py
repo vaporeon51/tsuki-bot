@@ -116,7 +116,7 @@ class VoteView(discord.ui.View):
         current_round: int = 1,
         matchups_log: list | None = None,
     ):
-        super().__init__(timeout=60.0)
+        super().__init__(timeout=5.0)
         self.user_id = user_id
         self.guild_id = guild_id
         self.total_rounds = total_rounds
@@ -147,10 +147,15 @@ class VoteView(discord.ui.View):
         for item in self.children:
             item.disabled = True
 
-        # If we time out, we can try to show a summary of what's been done,
-        # but since we can't edit the message without passing the message object to on_timeout
-        # (which requires holding a reference), we'll just let it die for now.
-        pass
+        if hasattr(self, "interaction"):
+            try:
+                await self.interaction.edit_original_response(
+                    content="Ending session after 5 seconds (blame discord!)",
+                    embeds=[],
+                    view=None,
+                )
+            except Exception:
+                pass
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.user_id:
@@ -213,6 +218,7 @@ class VoteView(discord.ui.View):
                 self.current_round + 1,
                 self.matchups_log,
             )
+            next_view.interaction = interaction
             await interaction.edit_original_response(embeds=next_view.embeds, view=next_view)
         else:
             summary_embed = VoteSummaryEmbed(
