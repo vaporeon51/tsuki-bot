@@ -4,6 +4,11 @@ import discord
 
 from src.db.bias_rater import get_matchup, record_vote
 
+# Discord renders multiple embeds that share the same `url` as a single gallery
+# card with their images laid out side-by-side. Any valid, non-empty URL works —
+# it just has to match across all the embeds we want grouped.
+_EMBED_GROUP_URL = "https://github.com/vaporeon51/tsuki-bot"
+
 
 class VoteSummaryEmbed(discord.Embed):
     def __init__(self, matchups: list[tuple[str, str, str, str, int]]):
@@ -23,34 +28,44 @@ class VoteSummaryEmbed(discord.Embed):
         self.description = "\n".join(description_lines) if description_lines else "No votes cast."
 
 
-class VoteRoundEmbed(discord.Embed):
-    def __init__(self, left_idol, right_idol, round_num: int, total_rounds: int):
-        # idol = (role_id, member_name, group_name, global_elo, image_url)
-        super().__init__(
-            title=f"Head to Head (Round {round_num}/{total_rounds})",
-            description="Vote for your bias! Who do you prefer?",
-            color=discord.Color.blue(),
-        )
-        self.add_field(
-            name="⬅️ Left",
-            value=f"**{left_idol[1]}**\n{left_idol[2]}\n*Global ELO: {left_idol[3]}*",
-            inline=True,
-        )
-        self.add_field(
-            name="➡️ Right",
-            value=f"**{right_idol[1]}**\n{right_idol[2]}\n*Global ELO: {right_idol[3]}*",
-            inline=True,
-        )
+def build_round_embeds(
+    left_idol, right_idol, round_num: int, total_rounds: int
+) -> list[discord.Embed]:
+    # idol = (role_id, member_name, group_name, global_elo, image_url)
+    header = discord.Embed(
+        title=f"Head to Head (Round {round_num}/{total_rounds})",
+        description=(
+            f"⬅️ **{left_idol[1]}** ({left_idol[2]}) — ELO {left_idol[3]}\n"
+            f"➡️ **{right_idol[1]}** ({right_idol[2]}) — ELO {right_idol[3]}\n\n"
+            "Vote for your bias!"
+        ),
+        color=discord.Color.blue(),
+        url=_EMBED_GROUP_URL,
+    )
+    if left_idol[4]:
+        header.set_image(url=left_idol[4])
 
-        # We can't display two side-by-side images easily in a single embed,
-        # so we'll just set one image and one thumbnail if both exist,
-        # or combine them if desired, but discord embeds natively only support 1 main image and 1 thumbnail.
-        if left_idol[4] or right_idol[4]:
-            if left_idol[4] and right_idol[4]:
-                self.set_image(url=left_idol[4])
-                self.set_thumbnail(url=right_idol[4])
-            else:
-                self.set_image(url=left_idol[4] or right_idol[4])
+    right = discord.Embed(url=_EMBED_GROUP_URL)
+    if right_idol[4]:
+        right.set_image(url=right_idol[4])
+
+    return [header, right]
+
+
+def build_result_embed(
+    winner, loser, gw: int, gl: int, sw: int, sl: int, pw: int, pl: int
+) -> discord.Embed:
+    embed = discord.Embed(
+        title=f"{winner[1]} won!",
+        description=f"**{winner[1]}** ({winner[2]}) over {loser[1]} ({loser[2]})",
+        color=discord.Color.green(),
+    )
+    embed.add_field(name="Global ELO", value=f"Winner: +{gw} | Loser: {gl}", inline=False)
+    embed.add_field(name="Server ELO", value=f"Winner: +{sw} | Loser: {sl}", inline=False)
+    embed.add_field(name="Personal ELO", value=f"Winner: +{pw} | Loser: {pl}", inline=False)
+    if winner[4]:
+        embed.set_image(url=winner[4])
+    return embed
 
 
 class VoteView(discord.ui.View):
@@ -71,7 +86,7 @@ class VoteView(discord.ui.View):
         self.matchups_log = matchups_log or []
 
         self.left_idol, self.right_idol = matchup[0], matchup[1]
-        self.embed = VoteRoundEmbed(
+        self.embeds = build_round_embeds(
             self.left_idol, self.right_idol, self.current_round, self.total_rounds
         )
 
@@ -122,16 +137,9 @@ class VoteView(discord.ui.View):
         )
         self.matchups_log.append((winner[1], loser[1], winner[2], loser[2], gw))
 
-        # Update Embed to show result
-        self.embed.clear_fields()
-        self.embed.description = f"**{winner[1]}** won! ELO updated."
-        self.embed.add_field(name="Global ELO", value=f"Winner: +{gw} | Loser: {gl}", inline=False)
-        self.embed.add_field(name="Server ELO", value=f"Winner: +{sw} | Loser: {sl}", inline=False)
-        self.embed.add_field(
-            name="Personal ELO", value=f"Winner: +{pw} | Loser: {pl}", inline=False
-        )
-
-        await interaction.response.edit_message(embed=self.embed, view=self)
+        # Collapse to a single result embed so the winner's image gets the full frame
+        self.embeds = [build_result_embed(winner, loser, gw, gl, sw, sl, pw, pl)]
+        await interaction.response.edit_message(embeds=self.embeds, view=self)
 
         # Trigger next round or summary
         if self.current_round < self.total_rounds:
@@ -143,12 +151,11 @@ class VoteView(discord.ui.View):
                 self.current_round + 1,
                 self.matchups_log,
             )
-            # Use original response to edit it with the new view
-            await interaction.edit_original_response(embed=next_view.embed, view=next_view)
+            await interaction.edit_original_response(embeds=next_view.embeds, view=next_view)
         else:
             await asyncio.sleep(1.5)
             summary_embed = VoteSummaryEmbed(self.matchups_log)
-            await interaction.edit_original_response(embed=summary_embed, view=None)
+            await interaction.edit_original_response(embeds=[summary_embed], view=None)
 
     @discord.ui.button(label="⬅️ Left", style=discord.ButtonStyle.primary)
     async def left_button(self, interaction: discord.Interaction, button: discord.ui.Button):

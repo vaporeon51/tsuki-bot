@@ -526,7 +526,7 @@ class BiasRater(discord.app_commands.Group):
                 guild_id=interaction.guild_id,
                 total_rounds=rounds,
             )
-            await interaction.response.send_message(embed=view.embed, view=view, ephemeral=True)
+            await interaction.response.send_message(embeds=view.embeds, view=view, ephemeral=True)
         except Exception as e:
             await interaction.response.send_message(
                 f"Could not start voting: {str(e)}", ephemeral=True
