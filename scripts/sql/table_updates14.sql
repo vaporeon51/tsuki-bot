@@ -10,17 +10,10 @@ CREATE TABLE IF NOT EXISTS user_elo (
     PRIMARY KEY (user_id, role_id)
 );
 
--- Match log
-CREATE TABLE IF NOT EXISTS elo_matches (
-    id          SERIAL PRIMARY KEY,
-    user_id     BIGINT NOT NULL,
-    winner_id   VARCHAR NOT NULL REFERENCES role_info(role_id) ON DELETE CASCADE,
-    loser_id    VARCHAR NOT NULL REFERENCES role_info(role_id) ON DELETE CASCADE,
-    global_winner_delta INTEGER NOT NULL,
-    global_loser_delta  INTEGER NOT NULL,
-    personal_winner_delta INTEGER NOT NULL,
-    personal_loser_delta  INTEGER NOT NULL,
-    matched_at  TIMESTAMP NOT NULL DEFAULT NOW()
+-- Guild (server) ELO per guild per idol
+CREATE TABLE IF NOT EXISTS guild_elo (
+    guild_id    BIGINT NOT NULL,
+    role_id     VARCHAR NOT NULL REFERENCES role_info(role_id) ON DELETE CASCADE,
+    guild_elo   INTEGER NOT NULL DEFAULT 1200,
+    PRIMARY KEY (guild_id, role_id)
 );
-
-CREATE INDEX IF NOT EXISTS elo_matches_user_id ON elo_matches(user_id);

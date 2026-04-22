@@ -37,7 +37,11 @@ from src.llm_chat import get_llm_chat_response
 from src.reaction.gather import gather_dead_link, gather_reactions
 from src.reddit_feeds import update_reddit_feeds
 from src.discord_ui.bias_rater import VoteView
-from src.db.bias_rater import get_global_leaderboard, get_personal_leaderboard
+from src.db.bias_rater import (
+    get_global_leaderboard,
+    get_guild_leaderboard,
+    get_personal_leaderboard,
+)
 
 TOKEN = os.environ.get("TOKEN")
 
@@ -517,7 +521,11 @@ class BiasRater(discord.app_commands.Group):
             return
 
         try:
-            view = VoteView(user_id=interaction.user.id, total_rounds=rounds)
+            view = await VoteView.create(
+                user_id=interaction.user.id,
+                guild_id=interaction.guild_id,
+                total_rounds=rounds,
+            )
             await interaction.response.send_message(embed=view.embed, view=view, ephemeral=True)
         except Exception as e:
             await interaction.response.send_message(
@@ -525,19 +533,23 @@ class BiasRater(discord.app_commands.Group):
             )
 
     @discord.app_commands.command(name="leaderboard", description="Show ELO leaderboard")
-    @discord.app_commands.describe(scope="global or personal")
+    @discord.app_commands.describe(scope="global, server, or personal")
     @discord.app_commands.choices(
         scope=[
             discord.app_commands.Choice(name="Global", value="global"),
+            discord.app_commands.Choice(name="Server", value="server"),
             discord.app_commands.Choice(name="Personal", value="personal"),
         ]
     )
     async def leaderboard(self, interaction: discord.Interaction, scope: str = "global"):
         if scope == "global":
-            tops = get_global_leaderboard()
+            tops = await asyncio.to_thread(get_global_leaderboard)
             title = "Global Idol Leaderboard"
+        elif scope == "server":
+            tops = await asyncio.to_thread(get_guild_leaderboard, interaction.guild_id)
+            title = f"Server Leaderboard for {interaction.guild.name}"
         else:
-            tops = get_personal_leaderboard(interaction.user.id)
+            tops = await asyncio.to_thread(get_personal_leaderboard, interaction.user.id)
             title = f"Personal Leaderboard for {interaction.user.display_name}"
 
         if not tops:

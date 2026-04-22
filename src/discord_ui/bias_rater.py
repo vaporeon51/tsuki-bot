@@ -54,22 +54,41 @@ class VoteRoundEmbed(discord.Embed):
 
 
 class VoteView(discord.ui.View):
-    def __init__(self, user_id: int, total_rounds: int, current_round: int = 1, matchups_log=None):
+    def __init__(
+        self,
+        user_id: int,
+        guild_id: int,
+        total_rounds: int,
+        matchup,
+        current_round: int = 1,
+        matchups_log: list | None = None,
+    ):
         super().__init__(timeout=60.0)
         self.user_id = user_id
+        self.guild_id = guild_id
         self.total_rounds = total_rounds
         self.current_round = current_round
         self.matchups_log = matchups_log or []
-
-        # Get matchup
-        matchup = get_matchup(self.user_id)
-        if not matchup:
-            raise ValueError("Not enough idols to match up!")
 
         self.left_idol, self.right_idol = matchup[0], matchup[1]
         self.embed = VoteRoundEmbed(
             self.left_idol, self.right_idol, self.current_round, self.total_rounds
         )
+
+    @classmethod
+    async def create(
+        cls,
+        user_id: int,
+        guild_id: int,
+        total_rounds: int,
+        current_round: int = 1,
+        matchups_log: list | None = None,
+    ) -> "VoteView":
+        # Matchup fetch hits the DB, keep it off the event loop
+        matchup = await asyncio.to_thread(get_matchup, user_id)
+        if not matchup:
+            raise ValueError("Not enough idols to match up!")
+        return cls(user_id, guild_id, total_rounds, matchup, current_round, matchups_log)
 
     async def on_timeout(self) -> None:
         for item in self.children:
@@ -97,14 +116,17 @@ class VoteView(discord.ui.View):
         for item in self.children:
             item.disabled = True
 
-        # Process ELO
-        gw, gl, pw, pl = record_vote(self.user_id, winner[0], loser[0])
+        # Process ELO (sync DB work pushed to a worker thread)
+        gw, gl, sw, sl, pw, pl = await asyncio.to_thread(
+            record_vote, self.user_id, self.guild_id, winner[0], loser[0]
+        )
         self.matchups_log.append((winner[1], loser[1], winner[2], loser[2], gw))
 
         # Update Embed to show result
         self.embed.clear_fields()
         self.embed.description = f"**{winner[1]}** won! ELO updated."
         self.embed.add_field(name="Global ELO", value=f"Winner: +{gw} | Loser: {gl}", inline=False)
+        self.embed.add_field(name="Server ELO", value=f"Winner: +{sw} | Loser: {sl}", inline=False)
         self.embed.add_field(
             name="Personal ELO", value=f"Winner: +{pw} | Loser: {pl}", inline=False
         )
@@ -114,8 +136,12 @@ class VoteView(discord.ui.View):
         # Trigger next round or summary
         if self.current_round < self.total_rounds:
             await asyncio.sleep(1.5)
-            next_view = VoteView(
-                self.user_id, self.total_rounds, self.current_round + 1, self.matchups_log
+            next_view = await VoteView.create(
+                self.user_id,
+                self.guild_id,
+                self.total_rounds,
+                self.current_round + 1,
+                self.matchups_log,
             )
             # Use original response to edit it with the new view
             await interaction.edit_original_response(embed=next_view.embed, view=next_view)
