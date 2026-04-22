@@ -12,7 +12,12 @@ _EMBED_GROUP_URL = "https://github.com/vaporeon51/tsuki-bot"
 
 
 class VoteSummaryEmbed(discord.Embed):
-    def __init__(self, matchups: list[tuple[str, str, str, str, int]]):
+    def __init__(
+        self,
+        matchups: list[tuple[str, str, str, str, int]],
+        voter_name: str | None = None,
+        voter_icon_url: str | None = None,
+    ):
         """
         matchups contains: (winner_name, loser_name, winner_group, loser_group, winner_global_delta)
         """
@@ -20,6 +25,8 @@ class VoteSummaryEmbed(discord.Embed):
             title="Bias Rater Session Summary",
             color=discord.Color.purple(),
         )
+        if voter_name:
+            self.set_author(name=voter_name, icon_url=voter_icon_url)
         description_lines = []
         for i, (w_name, l_name, w_group, l_group, w_delta) in enumerate(matchups, 1):
             w_disp = f"**{w_name}** ({w_group})"
@@ -190,7 +197,11 @@ class VoteView(discord.ui.View):
             await interaction.edit_original_response(embeds=next_view.embeds, view=next_view)
         else:
             await asyncio.sleep(1.5)
-            summary_embed = VoteSummaryEmbed(self.matchups_log)
+            summary_embed = VoteSummaryEmbed(
+                self.matchups_log,
+                voter_name=interaction.user.display_name,
+                voter_icon_url=interaction.user.display_avatar.url,
+            )
             # Post as a standalone channel message (not via interaction.followup)
             # so it doesn't render as a reply to the ephemeral voting card.
             await interaction.channel.send(embed=summary_embed)
