@@ -1,9 +1,17 @@
+import datetime
 import random
 from typing import Tuple
 
 import psycopg
 
 from . import CONN_DICT
+
+_KST = datetime.timezone(datetime.timedelta(hours=9))
+
+
+def _today_kst() -> datetime.date:
+    """Current date in KST — matches the birthday-feed convention in this codebase."""
+    return datetime.datetime.now(_KST).date()
 
 # Only idols with both a member name and an image_url participate in matchups/leaderboards.
 # All queries alias role_info as `r` so this predicate is reusable without string surgery.
@@ -253,3 +261,70 @@ def get_personal_leaderboard(user_id: int, limit: int = 15) -> list[tuple[str, s
                 (user_id, limit),
             )
             return cur.fetchall()
+
+
+# ---------------------------------------------------------------------------
+# Daily bracket challenge
+# ---------------------------------------------------------------------------
+
+
+def get_daily_idols(
+    date: datetime.date | None = None,
+) -> list[tuple[str, str, str, int, str]]:
+    """Deterministic set of 8 active idols for a given KST date (default: today).
+
+    Seeded by the date's ordinal so every user who runs /bias daily on the same
+    KST day sees the same 8 idols in the same bracket order. Returns an empty
+    list if fewer than 8 active idols exist.
+    """
+    if date is None:
+        date = _today_kst()
+
+    with psycopg.connect(**CONN_DICT) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""
+                SELECT r.role_id, r.member_name, r.group_name,
+                       COALESCE(r.global_elo, 1200), r.image_url
+                FROM role_info r
+                WHERE {_ACTIVE_IDOL_PREDICATE}
+                ORDER BY r.role_id
+                """
+            )
+            all_idols = cur.fetchall()
+
+    if len(all_idols) < 8:
+        return []
+
+    rng = random.Random(date.toordinal())
+    return rng.sample(all_idols, 8)
+
+
+def has_completed_daily(user_id: int, date: datetime.date | None = None) -> bool:
+    if date is None:
+        date = _today_kst()
+    with psycopg.connect(**CONN_DICT) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT 1 FROM bias_daily_completions
+                WHERE user_id = %s AND completion_date = %s;
+                """,
+                (user_id, date),
+            )
+            return cur.fetchone() is not None
+
+
+def record_daily_completion(user_id: int, date: datetime.date | None = None) -> None:
+    if date is None:
+        date = _today_kst()
+    with psycopg.connect(**CONN_DICT) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO bias_daily_completions (user_id, completion_date)
+                VALUES (%s, %s)
+                ON CONFLICT DO NOTHING;
+                """,
+                (user_id, date),
+            )

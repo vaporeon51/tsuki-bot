@@ -42,6 +42,7 @@ from src.db.bias_rater import (
     get_global_leaderboard,
     get_guild_leaderboard,
     get_personal_leaderboard,
+    has_completed_daily,
 )
 
 TOKEN = os.environ.get("TOKEN")
@@ -251,6 +252,12 @@ async def latest(
 async def autofeed(
     interaction: discord.Interaction, query: str | None = None, interval: int = 20, count: int = 5
 ):
+    if not await asyncio.to_thread(has_completed_daily, interaction.user.id):
+        await interaction.response.send_message(
+            f"Complete today's `/bias daily` before using autofeed! {TSUKI_NOM}",
+            ephemeral=True,
+        )
+        return
     if interval < 2 or interval > 60 * 60 * 24:
         await interaction.response.send_message(
             f"Interval must be between 2 seconds and 24 hours ({60 * 60 * 24}).", ephemeral=True
@@ -620,6 +627,30 @@ class BiasRater(discord.app_commands.Group):
             await interaction.edit_original_response(content=f"Could not start voting: {str(e)}")
         await asyncio.to_thread(add_stat_count, "bias_vote")
 
+    @discord.app_commands.command(
+        name="daily",
+        description="Today's 8-idol bracket challenge (same set for everyone, once per day)",
+    )
+    async def daily(self, interaction: discord.Interaction):
+        if await asyncio.to_thread(has_completed_daily, interaction.user.id):
+            await interaction.response.send_message(
+                "You've already completed today's daily bracket! Come back tomorrow.",
+                ephemeral=True,
+            )
+            return
+
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        try:
+            view = await VoteView.create_daily(
+                user_id=interaction.user.id,
+                guild_id=interaction.guild_id,
+            )
+            view.interaction = interaction
+            await interaction.edit_original_response(embeds=view.embeds, view=view)
+        except Exception as e:
+            await interaction.edit_original_response(content=f"Could not start daily: {str(e)}")
+        await asyncio.to_thread(add_stat_count, "bias_daily")
+
     @discord.app_commands.command(name="leaderboard", description="Show ELO leaderboard")
     @discord.app_commands.describe(scope="global, server, or personal")
     @discord.app_commands.choices(
@@ -673,6 +704,12 @@ class BiasRater(discord.app_commands.Group):
         interval: int = 20,
         count: int = 5,
     ):
+        if not await asyncio.to_thread(has_completed_daily, interaction.user.id):
+            await interaction.response.send_message(
+                f"Complete today's `/bias daily` before using autofeed! {TSUKI_NOM}",
+                ephemeral=True,
+            )
+            return
         if interval < 2 or interval > 60 * 60 * 24:
             await interaction.response.send_message(
                 f"Interval must be between 2 seconds and 24 hours ({60 * 60 * 24}).", ephemeral=True
