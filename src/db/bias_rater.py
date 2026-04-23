@@ -12,6 +12,13 @@ _ACTIVE_IDOL_PREDICATE = (
     "AND r.image_url IS NOT NULL AND TRIM(r.image_url) != ''"
 )
 
+# Rank-based sampling exponent for the first pick in get_matchup (weight ∝ 1/rank^α).
+# Scale-invariant: behaves consistently regardless of how wide the user's ELO spread is.
+# At α=0.5 over ~200 idols, rank 1 is roughly 14× as likely as rank 200 — gentle bias
+# toward the user's higher-ELO idols while keeping plenty of exploration. Raise for
+# more top-heavy picks, lower for more uniform.
+_FIRST_PICK_ALPHA = 0.5
+
 
 def calculate_elo_delta(winner_elo: int, loser_elo: int, k: int = 32) -> Tuple[int, int]:
     """Calculate the expected ELO shift for a win/loss."""
@@ -31,14 +38,26 @@ def get_matchup(user_id: int) -> list[tuple[str, str, str, int, str]] | None:
     """
     with psycopg.connect(**CONN_DICT) as conn:
         with conn.cursor() as cur:
-            # 1. Pick a random active idol A
+            # 1. Pick the first idol via rank-weighted sampling (Efraimidis-Spirakis /
+            # Gumbel-trick) on personal ELO. weight ∝ 1/rank^α so the user's higher-ELO
+            # idols surface more often; everyone still has some chance. Scale-invariant
+            # — a user with 20 votes and a user with 2000 see the same bias shape.
             cur.execute(
                 f"""
-                SELECT r.role_id, r.member_name, r.group_name, COALESCE(u.personal_elo, 1200), r.image_url
-                FROM role_info r
-                LEFT JOIN user_elo u ON r.role_id = u.role_id AND u.user_id = %s
-                WHERE {_ACTIVE_IDOL_PREDICATE}
-                ORDER BY RANDOM()
+                WITH ranked AS (
+                    SELECT r.role_id, r.member_name, r.group_name,
+                           COALESCE(u.personal_elo, 1200) AS elo,
+                           r.image_url,
+                           ROW_NUMBER() OVER (
+                               ORDER BY COALESCE(u.personal_elo, 1200) DESC, r.role_id
+                           ) AS rnk
+                    FROM role_info r
+                    LEFT JOIN user_elo u ON r.role_id = u.role_id AND u.user_id = %s
+                    WHERE {_ACTIVE_IDOL_PREDICATE}
+                )
+                SELECT role_id, member_name, group_name, elo, image_url
+                FROM ranked
+                ORDER BY -ln(GREATEST(RANDOM(), 1e-10)) * POWER(rnk, {_FIRST_PICK_ALPHA}) ASC
                 LIMIT 1;
                 """,
                 (user_id,),
