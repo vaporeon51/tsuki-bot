@@ -133,11 +133,11 @@ async def on_ready():
 )
 async def feed(interaction: discord.Interaction, query: str | None = None):
 
-    min_age = get_min_age(interaction.guild_id)
+    min_age = await asyncio.to_thread(get_min_age, interaction.guild_id)
     if query in [None, "r", "random"]:
-        role_ids = get_random_roles(1, min_age)
+        role_ids = await asyncio.to_thread(get_random_roles, 1, min_age)
     else:
-        role_ids = get_closest_roles(query, min_age)
+        role_ids = await asyncio.to_thread(get_closest_roles, query, min_age)
 
     if not role_ids:
         text = f"Could not find a role for `{query if query else 'random'}`. This message will disappear in 30s."
@@ -145,7 +145,7 @@ async def feed(interaction: discord.Interaction, query: str | None = None):
         await interaction.response.send_message(text, delete_after=30)
         return
 
-    role_ids_and_urls = get_random_link_for_each_role(role_ids, min_age)
+    role_ids_and_urls = await asyncio.to_thread(get_random_link_for_each_role, role_ids, min_age)
     if not role_ids_and_urls:
         text = f"Could not find a content link for role id `{role_ids[0]}` given query `{query if query else 'random'}`. This message will disappear in 30s."
         print(text)
@@ -167,7 +167,7 @@ async def feed(interaction: discord.Interaction, query: str | None = None):
         message=sent_message, url=role_ids_and_urls[0][1], role_id=role_ids_and_urls[0][0]
     )
 
-    add_stat_count("feed")
+    await asyncio.to_thread(add_stat_count, "feed")
 
 
 @bot.tree.command(name="latest", description="Get latest kpop content using idol or group name.")
@@ -186,19 +186,19 @@ async def latest(
         )
         return
 
-    min_age = get_min_age(interaction.guild_id)
+    min_age = await asyncio.to_thread(get_min_age, interaction.guild_id)
     if query in [None, "a", "all"]:
-        role_ids_and_urls = get_latest_links_for_roles(
+        role_ids_and_urls = await asyncio.to_thread(get_latest_links_for_roles,
             num_links=num_images, skip=skip, min_age=min_age
         )
     else:
-        role_ids = get_closest_roles(query, min_age, count=num_images)
+        role_ids = await asyncio.to_thread(get_closest_roles, query, min_age, count=num_images)
         if not role_ids:
             text = f"Could not find a role for `{query if query else 'random'}`. This message will disappear in 30s."
             print(text)
             await interaction.response.send_message(text, delete_after=30)
             return
-        role_ids_and_urls = get_latest_links_for_roles(
+        role_ids_and_urls = await asyncio.to_thread(get_latest_links_for_roles,
             num_links=num_images, skip=skip, min_age=min_age, role_ids=role_ids
         )
 
@@ -223,7 +223,7 @@ async def latest(
             await asyncio.sleep(4)
 
     await asyncio.shield(asyncio.gather(*tasks))
-    add_stat_count("latest")
+    await asyncio.to_thread(add_stat_count, "latest")
 
 
 @bot.tree.command(
@@ -261,18 +261,18 @@ async def autofeed(
         await task
     finally:
         bot.active_commands[guild_id][command_name].remove(task)
-        add_stat_count("autofeed")
+        await asyncio.to_thread(add_stat_count, "autofeed")
 
 
 async def autofeed_command(
     interaction: discord.Interaction, query: str | None, interval: int, count: int
 ):
     await interaction.response.defer(thinking=True)
-    min_age = get_min_age(interaction.guild_id)
+    min_age = await asyncio.to_thread(get_min_age, interaction.guild_id)
     if query in [None, "r", "random"]:
-        role_ids = get_random_roles(count, min_age)
+        role_ids = await asyncio.to_thread(get_random_roles, count, min_age)
     else:
-        role_ids = get_closest_roles(query, min_age, count)
+        role_ids = await asyncio.to_thread(get_closest_roles, query, min_age, count)
 
     if not role_ids:
         text = f"Could not find a role for `{query if query else 'random'}`. This message will disappear in 30s."
@@ -287,11 +287,11 @@ async def autofeed_command(
         temp = count // temp + 1
         role_ids = (role_ids * temp)[:count]
 
-    role_ids_and_urls = get_random_link_for_each_role(role_ids=role_ids, min_age=min_age)
+    role_ids_and_urls = await asyncio.to_thread(get_random_link_for_each_role, role_ids=role_ids, min_age=min_age)
 
     # One retry attempt incase a role had a full recently sent queue
     if not role_ids_and_urls or len(role_ids_and_urls) != count:
-        role_ids_and_urls = get_random_link_for_each_role(role_ids=role_ids, min_age=min_age)
+        role_ids_and_urls = await asyncio.to_thread(get_random_link_for_each_role, role_ids=role_ids, min_age=min_age)
 
     # Proceed only if we got more than half of the count urls
     if not role_ids_and_urls or len(role_ids_and_urls) < count // 2:
@@ -347,7 +347,7 @@ async def bias_autofeed_command(
     interaction: discord.Interaction, scope: str, interval: int, count: int
 ):
     await interaction.response.defer(thinking=True)
-    min_age = get_min_age(interaction.guild_id)
+    min_age = await asyncio.to_thread(get_min_age, interaction.guild_id)
 
     if scope == "global":
         tops = await asyncio.to_thread(get_global_leaderboard, 15)
@@ -373,11 +373,11 @@ async def bias_autofeed_command(
     # Pick randomly with weights and replacement
     role_ids = random.choices(top_roles, weights=weights, k=count)
 
-    role_ids_and_urls = get_random_link_for_each_role(role_ids=role_ids, min_age=min_age)
+    role_ids_and_urls = await asyncio.to_thread(get_random_link_for_each_role, role_ids=role_ids, min_age=min_age)
 
     # One retry attempt incase a role had a full recently sent queue
     if not role_ids_and_urls or len(role_ids_and_urls) != count:
-        role_ids_and_urls = get_random_link_for_each_role(role_ids=role_ids, min_age=min_age)
+        role_ids_and_urls = await asyncio.to_thread(get_random_link_for_each_role, role_ids=role_ids, min_age=min_age)
 
     # Proceed only if we got more than half of the count urls
     if not role_ids_and_urls or len(role_ids_and_urls) < count // 2:
@@ -439,14 +439,14 @@ class RedditFeed(discord.app_commands.Group):
     ):
         try:
             assert interaction.guild_id is not None
-            set_reddit_feed(interaction.guild_id, channel.id, subreddit)
+            await asyncio.to_thread(set_reddit_feed, interaction.guild_id, channel.id, subreddit)
             await interaction.response.send_message(
                 f"Channel `{channel.name}` is set to recieve updates from `r/{subreddit}`."
             )
         except Exception as e:
             print(e)
             await interaction.response.send_message(f"Failed to set channel: {e}", ephemeral=True)
-        add_stat_count("reddit_set_feed")
+        await asyncio.to_thread(add_stat_count, "reddit_set_feed")
 
     @discord.app_commands.command(
         name="list_feeds", description="List the existing subscriptions for this server."
@@ -454,7 +454,7 @@ class RedditFeed(discord.app_commands.Group):
     async def list_feeds(self, interaction: discord.Interaction):
         try:
             assert interaction.guild_id is not None
-            subs = get_subscriptions(interaction.guild_id)
+            subs = await asyncio.to_thread(get_subscriptions, interaction.guild_id)
             if not subs:
                 await interaction.response.send_message(
                     "No reddit feeds for this server.", ephemeral=True
@@ -468,7 +468,7 @@ class RedditFeed(discord.app_commands.Group):
             await interaction.response.send_message(
                 f"Failed to get server subscriptions: {e}", ephemeral=True
             )
-        add_stat_count("reddit_list_feeds")
+        await asyncio.to_thread(add_stat_count, "reddit_list_feeds")
 
     @discord.app_commands.command(
         name="unset_feeds", description="Unset all reddit feeds for this server."
@@ -476,12 +476,12 @@ class RedditFeed(discord.app_commands.Group):
     async def unset_feeds(self, interaction: discord.Interaction):
         try:
             assert interaction.guild_id is not None
-            unset_feeds(interaction.guild_id)
+            await asyncio.to_thread(unset_feeds, interaction.guild_id)
             await interaction.response.send_message("Unset all reddits feed for this server.")
         except Exception as e:
             print(e)
             await interaction.response.send_message(f"Failed to unset feeds: {e}", ephemeral=True)
-        add_stat_count("reddit_unset_feeds")
+        await asyncio.to_thread(add_stat_count, "reddit_unset_feeds")
 
 
 @discord.app_commands.default_permissions(manage_messages=True)
@@ -501,14 +501,14 @@ class BirthdayFeed(discord.app_commands.Group):
     async def set_feed(self, interaction: discord.Interaction, channel: discord.TextChannel):
         try:
             assert interaction.guild_id is not None
-            set_birthday_feed(interaction.guild_id, channel.id)
+            await asyncio.to_thread(set_birthday_feed, interaction.guild_id, channel.id)
             await interaction.response.send_message(
                 f"Channel `{channel.name}` is set to recieve birthday updates."
             )
         except Exception as e:
             print(e)
             await interaction.response.send_message(f"Failed to set channel: {e}", ephemeral=True)
-        add_stat_count("birthday_set_feed")
+        await asyncio.to_thread(add_stat_count, "birthday_set_feed")
 
     @discord.app_commands.command(
         name="unset_feeds", description="Unset all birthday feeds for this server."
@@ -516,12 +516,12 @@ class BirthdayFeed(discord.app_commands.Group):
     async def unset_feeds(self, interaction: discord.Interaction):
         try:
             assert interaction.guild_id is not None
-            unset_birthday_feeds(interaction.guild_id)
+            await asyncio.to_thread(unset_birthday_feeds, interaction.guild_id)
             await interaction.response.send_message("Unset all birthday feeds for this server.")
         except Exception as e:
             print(e)
             await interaction.response.send_message(f"Failed to unset feeds: {e}", ephemeral=True)
-        add_stat_count("birthday_unset_feed")
+        await asyncio.to_thread(add_stat_count, "birthday_unset_feed")
 
 
 @discord.app_commands.default_permissions(manage_guild=True)
@@ -542,7 +542,7 @@ class Admin(discord.app_commands.Group):
         text = "Cancelling all autofeed commands"
         print(f"Guild: {interaction.guild_id} Request: {text}")
         await interaction.response.send_message(text)
-        add_stat_count("cancel_all_autofeeds")
+        await asyncio.to_thread(add_stat_count, "cancel_all_autofeeds")
 
     @discord.app_commands.command(
         name="set_age_limit", description="Set the minimum age of idol at content upload time."
@@ -566,7 +566,7 @@ class Admin(discord.app_commands.Group):
                 )
 
             else:
-                set_min_age(interaction.guild_id, min_age)
+                await asyncio.to_thread(set_min_age, interaction.guild_id, min_age)
                 await interaction.response.send_message(
                     f"Min age has been successfully set to `{min_age}`.", ephemeral=True
                 )
@@ -577,7 +577,7 @@ class Admin(discord.app_commands.Group):
                 "Min age was not poorly formatted. Should be in the format `22 year 2 month 2 week`",
                 ephemeral=True,
             )
-        add_stat_count("set_age_limit")
+        await asyncio.to_thread(add_stat_count, "set_age_limit")
 
 
 @discord.app_commands.guild_only()
@@ -599,7 +599,7 @@ class BiasRater(discord.app_commands.Group):
             await interaction.edit_original_response(embeds=view.embeds, view=view)
         except Exception as e:
             await interaction.edit_original_response(content=f"Could not start voting: {str(e)}")
-        add_stat_count("bias_vote")
+        await asyncio.to_thread(add_stat_count, "bias_vote")
 
     @discord.app_commands.command(name="leaderboard", description="Show ELO leaderboard")
     @discord.app_commands.describe(scope="global, server, or personal")
@@ -629,7 +629,7 @@ class BiasRater(discord.app_commands.Group):
 
         embeds = build_leaderboard_embeds(title, tops)
         await interaction.edit_original_response(embeds=embeds)
-        add_stat_count("bias_leaderboard")
+        await asyncio.to_thread(add_stat_count, "bias_leaderboard")
 
     @discord.app_commands.command(
         name="autofeed",
@@ -675,7 +675,7 @@ class BiasRater(discord.app_commands.Group):
             await task
         finally:
             bot.active_commands[guild_id][command_name].remove(task)
-            add_stat_count("bias_autofeed")
+            await asyncio.to_thread(add_stat_count, "bias_autofeed")
 
 
 async def is_trigger_message(message):

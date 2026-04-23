@@ -18,7 +18,7 @@ async def gather_dead_link(message: discord.Message, url: str) -> None:
 
     if is_message_broken_link(message):
         print(f"URL {url} is broken and incrementing their report counts.")
-        report_broken_link_url(url=url)
+        await asyncio.to_thread(report_broken_link_url, url)
 
 
 async def gather_reactions(message: discord.Message, url: str, role_id: str) -> None:
@@ -31,8 +31,8 @@ async def gather_reactions(message: discord.Message, url: str, role_id: str) -> 
 
     if is_message_broken_link(message):
         print(f"URL {url} is broken and incrementing their report counts.")
-        report_broken_link_url(url=url)
+        await asyncio.to_thread(report_broken_link_url, url)
         return
 
     count_by_emote = {emote.emoji: emote.count for emote in message.reactions}
-    update_given_emote_counts(role_id, url, count_by_emote)
+    await asyncio.to_thread(update_given_emote_counts, role_id, url, count_by_emote)
