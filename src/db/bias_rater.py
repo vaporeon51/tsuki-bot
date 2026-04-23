@@ -51,10 +51,10 @@ def get_matchup(user_id: int) -> list[tuple[str, str, str, int, str]] | None:
             role_id_a, _, _, personal_elo_a, _ = idol_a
 
             # 2. Pick an opponent B using an exponentially weighted sample based on ELO closeness.
-            # We sample items with probability proportional to exp(-MAX(elo_diff - 100, 0) / 100).
-            # This creates a "flat" probability distribution for anyone within 100 ELO,
-            # ensuring they all have an equal uniform chance of being picked. Outside of 100 ELO,
-            # it naturally decays to further opponents if there are no close ones.
+            # We sample items with probability proportional to exp(-MAX(elo_diff - 50, 0) / 150).
+            # This creates a "flat" probability distribution for anyone within 50 ELO,
+            # ensuring they all have an equal uniform chance of being picked. Outside of 50 ELO,
+            # it decays less steeply to ensure enough random variety amongst opponents.
             cur.execute(
                 f"""
                 SELECT r.role_id, r.member_name, r.group_name, COALESCE(u.personal_elo, 1200), r.image_url
@@ -62,7 +62,7 @@ def get_matchup(user_id: int) -> list[tuple[str, str, str, int, str]] | None:
                 LEFT JOIN user_elo u ON r.role_id = u.role_id AND u.user_id = %s
                 WHERE r.role_id != %s
                   AND {_ACTIVE_IDOL_PREDICATE}
-                ORDER BY -ln(GREATEST(RANDOM(), 1e-10)) * EXP(GREATEST(ABS(COALESCE(u.personal_elo, 1200) - %s) - 100, 0::numeric) / 100.0) ASC
+                ORDER BY -ln(GREATEST(RANDOM(), 1e-10)) * EXP(GREATEST(ABS(COALESCE(u.personal_elo, 1200) - %s) - 50, 0::numeric) / 100.0) ASC
                 LIMIT 1;
                 """,
                 (user_id, role_id_a, personal_elo_a),
