@@ -132,6 +132,12 @@ class VoteView(discord.ui.View):
         self.matchups_log = matchups_log or []
 
         self.left_idol, self.right_idol = matchup[0], matchup[1]
+
+        # Personalize the vote buttons so the user sees whose face they're picking
+        # (the decorator-defined labels get overwritten on each instance).
+        self.left_button.label = f"⬅️ {self.left_idol[1]}"
+        self.right_button.label = f"{self.right_idol[1]} ➡️"
+
         self.embeds = build_round_embeds(self.left_idol, self.right_idol, self.current_round)
 
     @classmethod
