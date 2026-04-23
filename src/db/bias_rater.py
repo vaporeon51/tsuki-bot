@@ -13,6 +13,7 @@ def _today_kst() -> datetime.date:
     """Current date in KST — matches the birthday-feed convention in this codebase."""
     return datetime.datetime.now(_KST).date()
 
+
 # Only idols with both a member name and an image_url participate in matchups/leaderboards.
 # All queries alias role_info as `r` so this predicate is reusable without string surgery.
 _ACTIVE_IDOL_PREDICATE = (
@@ -270,12 +271,16 @@ def get_personal_leaderboard(user_id: int, limit: int = 15) -> list[tuple[str, s
 
 def get_daily_idols(
     date: datetime.date | None = None,
+    deterministic: bool = False,
 ) -> list[tuple[str, str, str, int, str]]:
-    """Deterministic set of 8 active idols for a given KST date (default: today).
+    """Set of 8 active idols for a given KST date (default: today).
 
-    Seeded by the date's ordinal so every user who runs /bias daily on the same
-    KST day sees the same 8 idols in the same bracket order. Returns an empty
-    list if fewer than 8 active idols exist.
+    When deterministic=True (default), the sample is seeded by the date's
+    ordinal so every user who runs /bias daily on the same KST day sees the
+    same 8 idols in the same bracket order. When deterministic=False, the
+    sample is freshly random per call — different users will see different
+    brackets even on the same day. Returns an empty list if fewer than 8
+    active idols exist.
     """
     if date is None:
         date = _today_kst()
@@ -296,7 +301,7 @@ def get_daily_idols(
     if len(all_idols) < 8:
         return []
 
-    rng = random.Random(date.toordinal())
+    rng = random.Random(date.toordinal()) if deterministic else random.Random()
     return rng.sample(all_idols, 8)
 
 
