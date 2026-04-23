@@ -117,7 +117,14 @@ async def on_ready():
     print(f"Currently in {len(bot.guilds)} servers:")
     for server in bot.guilds:
         try:
-            print("Server name:", server.name, "num of members:", server.member_count)
+            print(
+                "Server name:",
+                server.name,
+                ", ID:",
+                server.id,
+                ", num of members:",
+                server.member_count,
+            )
         except Exception as e:
             print("Could not get server info for:", server.name, str(e))
 
@@ -188,8 +195,8 @@ async def latest(
 
     min_age = await asyncio.to_thread(get_min_age, interaction.guild_id)
     if query in [None, "a", "all"]:
-        role_ids_and_urls = await asyncio.to_thread(get_latest_links_for_roles,
-            num_links=num_images, skip=skip, min_age=min_age
+        role_ids_and_urls = await asyncio.to_thread(
+            get_latest_links_for_roles, num_links=num_images, skip=skip, min_age=min_age
         )
     else:
         role_ids = await asyncio.to_thread(get_closest_roles, query, min_age, count=num_images)
@@ -198,8 +205,12 @@ async def latest(
             print(text)
             await interaction.response.send_message(text, delete_after=30)
             return
-        role_ids_and_urls = await asyncio.to_thread(get_latest_links_for_roles,
-            num_links=num_images, skip=skip, min_age=min_age, role_ids=role_ids
+        role_ids_and_urls = await asyncio.to_thread(
+            get_latest_links_for_roles,
+            num_links=num_images,
+            skip=skip,
+            min_age=min_age,
+            role_ids=role_ids,
         )
 
     if not role_ids_and_urls:
@@ -287,11 +298,15 @@ async def autofeed_command(
         temp = count // temp + 1
         role_ids = (role_ids * temp)[:count]
 
-    role_ids_and_urls = await asyncio.to_thread(get_random_link_for_each_role, role_ids=role_ids, min_age=min_age)
+    role_ids_and_urls = await asyncio.to_thread(
+        get_random_link_for_each_role, role_ids=role_ids, min_age=min_age
+    )
 
     # One retry attempt incase a role had a full recently sent queue
     if not role_ids_and_urls or len(role_ids_and_urls) != count:
-        role_ids_and_urls = await asyncio.to_thread(get_random_link_for_each_role, role_ids=role_ids, min_age=min_age)
+        role_ids_and_urls = await asyncio.to_thread(
+            get_random_link_for_each_role, role_ids=role_ids, min_age=min_age
+        )
 
     # Proceed only if we got more than half of the count urls
     if not role_ids_and_urls or len(role_ids_and_urls) < count // 2:
@@ -373,11 +388,15 @@ async def bias_autofeed_command(
     # Pick randomly with weights and replacement
     role_ids = random.choices(top_roles, weights=weights, k=count)
 
-    role_ids_and_urls = await asyncio.to_thread(get_random_link_for_each_role, role_ids=role_ids, min_age=min_age)
+    role_ids_and_urls = await asyncio.to_thread(
+        get_random_link_for_each_role, role_ids=role_ids, min_age=min_age
+    )
 
     # One retry attempt incase a role had a full recently sent queue
     if not role_ids_and_urls or len(role_ids_and_urls) != count:
-        role_ids_and_urls = await asyncio.to_thread(get_random_link_for_each_role, role_ids=role_ids, min_age=min_age)
+        role_ids_and_urls = await asyncio.to_thread(
+            get_random_link_for_each_role, role_ids=role_ids, min_age=min_age
+        )
 
     # Proceed only if we got more than half of the count urls
     if not role_ids_and_urls or len(role_ids_and_urls) < count // 2:
