@@ -135,8 +135,8 @@ class VoteView(discord.ui.View):
 
         # Personalize the vote buttons so the user sees whose face they're picking
         # (the decorator-defined labels get overwritten on each instance).
-        self.left_button.label = f"⬅️ {self.left_idol[1]}"
-        self.right_button.label = f"{self.right_idol[1]} ➡️"
+        self.left_button.label = f"{self.left_idol[1]}"
+        self.right_button.label = f"{self.right_idol[1]}"
 
         self.embeds = build_round_embeds(self.left_idol, self.right_idol, self.current_round)
 
@@ -275,3 +275,32 @@ class VoteView(discord.ui.View):
 
         self.stop()
         await self._advance(interaction)
+
+    @discord.ui.button(label="End", style=discord.ButtonStyle.secondary, emoji="🏁")
+    async def end_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not interaction.response.is_done():
+            try:
+                await interaction.response.defer()
+            except discord.errors.InteractionResponded:
+                pass
+        for item in self.children:
+            item.disabled = True
+
+        self.stop()
+
+        if self.matchups_log:
+            summary_embed = VoteSummaryEmbed(
+                self.matchups_log,
+                voter_name=interaction.user.display_name,
+                voter_icon_url=interaction.user.display_avatar.url,
+            )
+            await interaction.channel.send(embed=summary_embed)
+            content = "Session ended — summary posted."
+        else:
+            content = "Session ended."
+
+        await interaction.edit_original_response(
+            content=content,
+            embeds=[],
+            view=None,
+        )
