@@ -1,4 +1,5 @@
 import asyncio
+from dataclasses import dataclass
 
 import discord
 
@@ -11,15 +12,24 @@ from src.db.stats import add_stat_count
 _EMBED_GROUP_URL = "https://github.com/vaporeon51/tsuki-bot"
 
 
+@dataclass
+class MatchupLog:
+    left_name: str
+    left_group: str
+    right_name: str
+    right_group: str
+    winner_idx: int
+
+
 class VoteSummaryEmbed(discord.Embed):
     def __init__(
         self,
-        matchups: list[tuple[str, str, str, str, int]],
+        matchups: list[MatchupLog],
         voter_name: str | None = None,
         voter_icon_url: str | None = None,
     ):
         """
-        matchups contains: (selected_name, unselected_name, selected_group, unselected_group, selected_personal_delta)
+        matchups contains a list of MatchupLog instances.
         """
         super().__init__(
             title="Bias Rater Session Summary",
@@ -28,10 +38,14 @@ class VoteSummaryEmbed(discord.Embed):
         if voter_name:
             self.set_author(name=voter_name, icon_url=voter_icon_url)
         description_lines = []
-        for i, (s_name, u_name, s_group, u_group, _) in enumerate(matchups, 1):
-            s_disp = f"**{s_name}** ({s_group})"
-            u_disp = f"{u_name} ({u_group})"
-            description_lines.append(f"**{i}.** {s_disp} vs {u_disp}")
+        for i, log in enumerate(matchups, 1):
+            if log.winner_idx == 0:
+                l_disp = f"**{log.left_name}** ({log.left_group})"
+                r_disp = f"{log.right_name} ({log.right_group})"
+            else:
+                l_disp = f"{log.left_name} ({log.left_group})"
+                r_disp = f"**{log.right_name}** ({log.right_group})"
+            description_lines.append(f"**{i}.** {l_disp} vs {r_disp}")
 
         self.description = "\n".join(description_lines) if description_lines else "No votes cast."
 
@@ -109,9 +123,9 @@ class VoteView(discord.ui.View):
         guild_id: int,
         matchup,
         current_round: int = 1,
-        matchups_log: list | None = None,
+        matchups_log: list[MatchupLog] | None = None,
     ):
-        super().__init__(timeout=10.0)
+        super().__init__(timeout=30.0)
         self.user_id = user_id
         self.guild_id = guild_id
         self.current_round = current_round
@@ -126,7 +140,7 @@ class VoteView(discord.ui.View):
         user_id: int,
         guild_id: int,
         current_round: int = 1,
-        matchups_log: list | None = None,
+        matchups_log: list[MatchupLog] | None = None,
     ) -> "VoteView":
         # Matchup fetch hits the DB, keep it off the event loop
         matchup = await asyncio.to_thread(get_matchup, user_id)
@@ -206,7 +220,15 @@ class VoteView(discord.ui.View):
             record_vote, self.user_id, self.guild_id, selected[0], unselected[0]
         )
         await asyncio.to_thread(add_stat_count, "bias_vote_cast")
-        self.matchups_log.append((selected[1], unselected[1], selected[2], unselected[2], pw))
+        self.matchups_log.append(
+            MatchupLog(
+                left_name=self.left_idol[1],
+                left_group=self.left_idol[2],
+                right_name=self.right_idol[1],
+                right_group=self.right_idol[2],
+                winner_idx=winner_idx,
+            )
+        )
 
         # Collapse to a single result embed so the selected image gets the full frame
         self.embeds = [build_result_embed(selected, unselected, pw, pl)]
