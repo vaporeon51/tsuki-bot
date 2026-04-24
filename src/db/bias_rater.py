@@ -109,7 +109,7 @@ def record_vote(
     user_id: int, guild_id: int, winner_id: str, loser_id: str
 ) -> tuple[int, int, int, int, int, int]:
     """
-    Records a vote and updates global, guild, and personal ELO.
+    Records a vote and updates global, guild, and personal ELO and counters.
     Returns (global_winner_delta, global_loser_delta,
              guild_winner_delta, guild_loser_delta,
              personal_winner_delta, personal_loser_delta).
@@ -206,6 +206,57 @@ def record_vote(
                 WHERE user_id = %s AND role_id = %s;
                 """,
                 (pl_delta, user_id, loser_id),
+            )
+            cur.execute(
+                """
+                UPDATE role_info
+                SET global_win_count = global_win_count + 1,
+                    global_match_count = global_match_count + 1
+                WHERE role_id = %s;
+                """,
+                (winner_id,),
+            )
+            cur.execute(
+                """
+                UPDATE role_info
+                SET global_match_count = global_match_count + 1
+                WHERE role_id = %s;
+                """,
+                (loser_id,),
+            )
+            cur.execute(
+                """
+                UPDATE guild_elo
+                SET win_count = win_count + 1,
+                    match_count = match_count + 1
+                WHERE guild_id = %s AND role_id = %s;
+                """,
+                (guild_id, winner_id),
+            )
+            cur.execute(
+                """
+                UPDATE guild_elo
+                SET match_count = match_count + 1
+                WHERE guild_id = %s AND role_id = %s;
+                """,
+                (guild_id, loser_id),
+            )
+            cur.execute(
+                """
+                UPDATE user_elo
+                SET win_count = win_count + 1,
+                    match_count = match_count + 1
+                WHERE user_id = %s AND role_id = %s;
+                """,
+                (user_id, winner_id),
+            )
+            cur.execute(
+                """
+                UPDATE user_elo
+                SET match_count = match_count + 1
+                WHERE user_id = %s AND role_id = %s;
+                """,
+                (user_id, loser_id),
             )
 
             return gw_delta, gl_delta, sw_delta, sl_delta, pw_delta, pl_delta
