@@ -96,7 +96,7 @@ class VoteSummaryEmbed(discord.Embed):
             description_lines.append(f"**{i}.** {l_disp} vs {r_disp}")
 
         self.description = "\n".join(description_lines) if description_lines else "No votes cast."
-        self.set_footer(text="Run `/bias leaderboard` to see your updated bias list!")
+        self.set_footer(text="Use '/bias leaderboard' to see your updated bias list!")
 
 
 def build_round_embeds(left_idol, right_idol, round_num: int) -> list[discord.Embed]:
@@ -172,7 +172,7 @@ def build_daily_summary_embed(
     if lines:
         embed.add_field(name="Matches", value="\n".join(lines), inline=False)
 
-    embed.set_footer(text="Run `/bias leaderboard` to see your updated bias list!")
+    embed.set_footer(text="Use '/bias leaderboard' to see your updated bias list!")
     return embed
 
 
