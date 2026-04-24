@@ -96,6 +96,7 @@ class VoteSummaryEmbed(discord.Embed):
             description_lines.append(f"**{i}.** {l_disp} vs {r_disp}")
 
         self.description = "\n".join(description_lines) if description_lines else "No votes cast."
+        self.set_footer(text="Run `/bias leaderboard` to see your updated bias list!")
 
 
 def build_round_embeds(left_idol, right_idol, round_num: int) -> list[discord.Embed]:
@@ -120,9 +121,7 @@ def build_round_embeds(left_idol, right_idol, round_num: int) -> list[discord.Em
     return [header, right]
 
 
-def build_daily_round_embeds(
-    left_idol, right_idol, bracket: BracketState
-) -> list[discord.Embed]:
+def build_daily_round_embeds(left_idol, right_idol, bracket: BracketState) -> list[discord.Embed]:
     stage = bracket.round_label()
     match_num = bracket.total_matches_played + 1
     header = discord.Embed(
@@ -173,6 +172,7 @@ def build_daily_summary_embed(
     if lines:
         embed.add_field(name="Matches", value="\n".join(lines), inline=False)
 
+    embed.set_footer(text="Run `/bias leaderboard` to see your updated bias list!")
     return embed
 
 
@@ -247,15 +247,11 @@ class VoteView(discord.ui.View):
         # Daily bracket uses gold styling and hides the bail-out buttons so
         # users have to vote every match to earn completion credit.
         if self.is_daily:
-            self.embeds = build_daily_round_embeds(
-                self.left_idol, self.right_idol, self.bracket
-            )
+            self.embeds = build_daily_round_embeds(self.left_idol, self.right_idol, self.bracket)
             self.remove_item(self.skip_button)
             self.remove_item(self.end_button)
         else:
-            self.embeds = build_round_embeds(
-                self.left_idol, self.right_idol, self.current_round
-            )
+            self.embeds = build_round_embeds(self.left_idol, self.right_idol, self.current_round)
 
     @property
     def is_daily(self) -> bool:

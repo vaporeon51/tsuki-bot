@@ -140,7 +140,12 @@ async def on_ready():
     query="Idols and groups you want to include. Use `r` or `random` for random idol."
 )
 async def feed(interaction: discord.Interaction, query: str | None = None):
-
+    if not await asyncio.to_thread(has_completed_daily, interaction.user.id):
+        await interaction.response.send_message(
+            f"Complete today's `/bias daily` before using feed! {TSUKI_NOM}",
+            ephemeral=True,
+        )
+        return
     min_age = await asyncio.to_thread(get_min_age, interaction.guild_id)
     if query in [None, "r", "random"]:
         role_ids = await asyncio.to_thread(get_random_roles, 1, min_age)
@@ -187,7 +192,12 @@ async def feed(interaction: discord.Interaction, query: str | None = None):
 async def latest(
     interaction: discord.Interaction, query: str | None = None, num_images: int = 5, skip: int = 0
 ):
-
+    if not await asyncio.to_thread(has_completed_daily, interaction.user.id):
+        await interaction.response.send_message(
+            f"Complete today's `/bias daily` before using latest! {TSUKI_NOM}",
+            ephemeral=True,
+        )
+        return
     if num_images > 20:
         await interaction.response.send_message(
             "Cannot send more than 20 links at a time.", ephemeral=True
