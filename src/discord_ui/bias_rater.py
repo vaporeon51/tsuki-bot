@@ -192,7 +192,7 @@ def build_leaderboard_embeds(title: str, leaderboard: Leaderboard) -> list[disco
         color=discord.Color.gold(),
         url=_EMBED_GROUP_URL,
     )
-    header.set_footer(text=f"This leaderboard is based on {leaderboard.vote_count:,} votes.")
+    header.set_footer(text=f"Based on {leaderboard.vote_count:,} votes.")
     if leaderboard.entries and leaderboard.entries[0].image_url:
         header.set_image(url=leaderboard.entries[0].image_url)
 
