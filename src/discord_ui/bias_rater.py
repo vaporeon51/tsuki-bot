@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 import discord
 
 from src.db.bias_rater import (
+    Leaderboard,
     get_daily_idols,
     get_matchup,
     record_daily_completion,
@@ -176,16 +177,14 @@ def build_daily_summary_embed(
     return embed
 
 
-def build_leaderboard_embeds(
-    title: str, tops: list[tuple[str, str, str, int, str]]
-) -> list[discord.Embed]:
+def build_leaderboard_embeds(title: str, leaderboard: Leaderboard) -> list[discord.Embed]:
     """Header embed with the ranked list + #1 image, plus gallery embeds for #2 and #3."""
     medals = {1: "🥇", 2: "🥈", 3: "🥉"}
 
     lines = []
-    for rank, (_, name, group, elo, image_url) in enumerate(tops, 1):
+    for rank, entry in enumerate(leaderboard.entries, 1):
         prefix = medals.get(rank, f"**#{rank}**")
-        lines.append(f"{prefix}  **{name}** · {group} — **{elo}**")
+        lines.append(f"{prefix}  **{entry.member_name}** · {entry.group_name} — **{entry.elo}**")
 
     header = discord.Embed(
         title=f"🏆 {title}",
@@ -193,14 +192,15 @@ def build_leaderboard_embeds(
         color=discord.Color.gold(),
         url=_EMBED_GROUP_URL,
     )
-    if tops and tops[0][4]:
-        header.set_image(url=tops[0][4])
+    header.set_footer(text=f"This leaderboard is based on {leaderboard.vote_count:,} votes.")
+    if leaderboard.entries and leaderboard.entries[0].image_url:
+        header.set_image(url=leaderboard.entries[0].image_url)
 
     embeds = [header]
     for rank in (2, 3):
-        if len(tops) >= rank and tops[rank - 1][4]:
+        if len(leaderboard.entries) >= rank and leaderboard.entries[rank - 1].image_url:
             podium = discord.Embed(url=_EMBED_GROUP_URL)
-            podium.set_image(url=tops[rank - 1][4])
+            podium.set_image(url=leaderboard.entries[rank - 1].image_url)
             embeds.append(podium)
 
     return embeds

@@ -388,7 +388,7 @@ async def bias_autofeed_command(
     else:
         tops = await asyncio.to_thread(get_personal_leaderboard, interaction.user.id, 15)
 
-    if not tops:
+    if not tops.entries:
         text = f"Could not find any {scope} bias rankings. Try voting with `/bias vote` first!"
         print(text)
         message = await interaction.followup.send(content=text, wait=True)
@@ -397,10 +397,9 @@ async def bias_autofeed_command(
 
     # Weightings for ranks 1-15
     full_weights = [100, 70, 60, 50, 40, 30, 20, 15, 15, 10, 5, 2, 2, 2, 2]
-    weights = full_weights[: len(tops)]
+    weights = full_weights[: len(tops.entries)]
 
-    # role_id is the first element
-    top_roles = [top[0] for top in tops]
+    top_roles = [entry.role_id for entry in tops.entries]
 
     # Pick randomly with weights and replacement
     role_ids = random.choices(top_roles, weights=weights, k=count)
@@ -683,7 +682,7 @@ class BiasRater(discord.app_commands.Group):
             tops = await asyncio.to_thread(get_personal_leaderboard, interaction.user.id)
             title = f"Personal Leaderboard for {interaction.user.display_name}"
 
-        if not tops:
+        if not tops.entries:
             await interaction.edit_original_response(content="No votes recorded yet!")
             return
 

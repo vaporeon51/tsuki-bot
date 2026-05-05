@@ -1,5 +1,6 @@
 import datetime
 import random
+from dataclasses import dataclass
 from typing import Tuple
 
 import psycopg
@@ -27,6 +28,21 @@ _ACTIVE_IDOL_PREDICATE = (
 # toward the user's higher-ELO idols while keeping plenty of exploration. Raise for
 # more top-heavy picks, lower for more uniform.
 _FIRST_PICK_ALPHA = 0.5
+
+
+@dataclass(frozen=True)
+class LeaderboardEntry:
+    role_id: str
+    member_name: str
+    group_name: str
+    elo: int
+    image_url: str
+
+
+@dataclass(frozen=True)
+class Leaderboard:
+    entries: list[LeaderboardEntry]
+    vote_count: int
 
 
 def calculate_elo_delta(winner_elo: int, loser_elo: int, k: int = 32) -> Tuple[int, int]:
@@ -262,10 +278,34 @@ def record_vote(
             return gw_delta, gl_delta, sw_delta, sl_delta, pw_delta, pl_delta
 
 
-def get_global_leaderboard(limit: int = 15) -> list[tuple[str, str, str, int, str]]:
-    """Returns top idols by global ELO (role_id, member_name, group_name, global_elo, image_url)."""
+def _build_leaderboard(rows, vote_count) -> Leaderboard:
+    return Leaderboard(
+        entries=[
+            LeaderboardEntry(
+                role_id=row[0],
+                member_name=row[1],
+                group_name=row[2],
+                elo=row[3],
+                image_url=row[4],
+            )
+            for row in rows
+        ],
+        vote_count=int(vote_count or 0),
+    )
+
+
+def get_global_leaderboard(limit: int = 15) -> Leaderboard:
+    """Returns top idols by global ELO plus the global vote count."""
     with psycopg.connect(**CONN_DICT) as conn:
         with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT COALESCE(SUM(global_match_count), 0) / 2 AS vote_count
+                FROM role_info;
+                """
+            )
+            vote_count = cur.fetchone()[0]
+
             cur.execute(
                 f"""
                 SELECT r.role_id, r.member_name, r.group_name, r.global_elo, r.image_url
@@ -276,13 +316,23 @@ def get_global_leaderboard(limit: int = 15) -> list[tuple[str, str, str, int, st
                 """,
                 (limit,),
             )
-            return cur.fetchall()
+            return _build_leaderboard(cur.fetchall(), vote_count)
 
 
-def get_guild_leaderboard(guild_id: int, limit: int = 15) -> list[tuple[str, str, str, int, str]]:
-    """Returns top idols by guild ELO for a server (role_id, member_name, group_name, guild_elo, image_url)."""
+def get_guild_leaderboard(guild_id: int, limit: int = 15) -> Leaderboard:
+    """Returns top idols by guild ELO for a server plus the server vote count."""
     with psycopg.connect(**CONN_DICT) as conn:
         with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT COALESCE(SUM(match_count), 0) / 2 AS vote_count
+                FROM guild_elo
+                WHERE guild_id = %s;
+                """,
+                (guild_id,),
+            )
+            vote_count = cur.fetchone()[0]
+
             cur.execute(
                 f"""
                 SELECT r.role_id, r.member_name, r.group_name, g.guild_elo, r.image_url
@@ -294,13 +344,23 @@ def get_guild_leaderboard(guild_id: int, limit: int = 15) -> list[tuple[str, str
                 """,
                 (guild_id, limit),
             )
-            return cur.fetchall()
+            return _build_leaderboard(cur.fetchall(), vote_count)
 
 
-def get_personal_leaderboard(user_id: int, limit: int = 15) -> list[tuple[str, str, str, int, str]]:
-    """Returns top idols by personal ELO for a user (role_id, member_name, group_name, personal_elo, image_url)."""
+def get_personal_leaderboard(user_id: int, limit: int = 15) -> Leaderboard:
+    """Returns top idols by personal ELO for a user plus the personal vote count."""
     with psycopg.connect(**CONN_DICT) as conn:
         with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT COALESCE(SUM(match_count), 0) / 2 AS vote_count
+                FROM user_elo
+                WHERE user_id = %s;
+                """,
+                (user_id,),
+            )
+            vote_count = cur.fetchone()[0]
+
             cur.execute(
                 f"""
                 SELECT r.role_id, r.member_name, r.group_name, u.personal_elo, r.image_url
@@ -312,7 +372,7 @@ def get_personal_leaderboard(user_id: int, limit: int = 15) -> list[tuple[str, s
                 """,
                 (user_id, limit),
             )
-            return cur.fetchall()
+            return _build_leaderboard(cur.fetchall(), vote_count)
 
 
 # ---------------------------------------------------------------------------
