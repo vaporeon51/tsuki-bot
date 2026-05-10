@@ -25,6 +25,32 @@ class RedditPost:
     media_urls: list[str]
 
 
+def get_reddit_video_url(post: asyncpraw.models.Submission) -> str:
+    """Return the playable fallback URL for a Reddit-hosted video."""
+    post_data = post.__dict__
+    media_sources = [
+        post_data.get("secure_media"),
+        post_data.get("media"),
+    ]
+
+    for crosspost in post_data.get("crosspost_parent_list") or []:
+        media_sources.extend(
+            [
+                crosspost.get("secure_media"),
+                crosspost.get("media"),
+            ]
+        )
+
+    for media in media_sources:
+        if not media:
+            continue
+        reddit_video = media.get("reddit_video")
+        if reddit_video and reddit_video.get("fallback_url"):
+            return reddit_video["fallback_url"]
+
+    raise ValueError(f"Could not find reddit video URL for {post.url}.")
+
+
 async def get_latest_posts(subreddit: str) -> list[asyncpraw.models.Submission]:
     """Get latest posts from kpopfap subreddit."""
     reddit = asyncpraw.Reddit(
@@ -70,7 +96,7 @@ def parse_post(post: asyncpraw.models.Submission) -> RedditPost:
     elif "v.redd.it" in post.url:
         # For uploaded videos (non-imgur)
         is_gallery = True
-        media_urls = [post.__dict__["secure_media"]["reddit_video"]["fallback_url"]]
+        media_urls = [get_reddit_video_url(post)]
     else:
         is_gallery = False
         media_urls = [post.url]
