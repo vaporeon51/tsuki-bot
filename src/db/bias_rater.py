@@ -1,9 +1,19 @@
+import datetime
 import random
+from dataclasses import dataclass
 from typing import Tuple
 
 import psycopg
 
 from . import CONN_DICT
+
+_KST = datetime.timezone(datetime.timedelta(hours=9))
+
+
+def _today_kst() -> datetime.date:
+    """Current date in KST — matches the birthday-feed convention in this codebase."""
+    return datetime.datetime.now(_KST).date()
+
 
 # Only idols with both a member name and an image_url participate in matchups/leaderboards.
 # All queries alias role_info as `r` so this predicate is reusable without string surgery.
@@ -11,6 +21,28 @@ _ACTIVE_IDOL_PREDICATE = (
     "r.member_name IS NOT NULL AND TRIM(r.member_name) != '' "
     "AND r.image_url IS NOT NULL AND TRIM(r.image_url) != ''"
 )
+
+# Rank-based sampling exponent for the first pick in get_matchup (weight ∝ 1/rank^α).
+# Scale-invariant: behaves consistently regardless of how wide the user's ELO spread is.
+# At α=0.5 over ~200 idols, rank 1 is roughly 14× as likely as rank 200 — gentle bias
+# toward the user's higher-ELO idols while keeping plenty of exploration. Raise for
+# more top-heavy picks, lower for more uniform.
+_FIRST_PICK_ALPHA = 0.5
+
+
+@dataclass(frozen=True)
+class LeaderboardEntry:
+    role_id: str
+    member_name: str
+    group_name: str
+    elo: int
+    image_url: str
+
+
+@dataclass(frozen=True)
+class Leaderboard:
+    entries: list[LeaderboardEntry]
+    vote_count: int
 
 
 def calculate_elo_delta(winner_elo: int, loser_elo: int, k: int = 32) -> Tuple[int, int]:
@@ -25,58 +57,61 @@ def calculate_elo_delta(winner_elo: int, loser_elo: int, k: int = 32) -> Tuple[i
 
 
 def get_matchup(user_id: int) -> list[tuple[str, str, str, int, str]] | None:
-    """Return two idols with close global ELO (within +/- 150).
+    """Return two idols with close personal ELO.
     Only selects idols that have a non-empty member_name.
-    Returns: list of 2 tuples (role_id, member_name, group_name, global_elo, image_url)
+    Returns: list of 2 tuples (role_id, member_name, group_name, personal_elo, image_url)
     """
     with psycopg.connect(**CONN_DICT) as conn:
         with conn.cursor() as cur:
-            # 1. Pick a random active idol A
+            # 1. Pick the first idol via rank-weighted sampling (Efraimidis-Spirakis /
+            # Gumbel-trick) on personal ELO. weight ∝ 1/rank^α so the user's higher-ELO
+            # idols surface more often; everyone still has some chance. Scale-invariant
+            # — a user with 20 votes and a user with 2000 see the same bias shape.
             cur.execute(
                 f"""
-                SELECT r.role_id, r.member_name, r.group_name, r.global_elo, r.image_url
-                FROM role_info r
-                WHERE {_ACTIVE_IDOL_PREDICATE}
-                ORDER BY RANDOM()
+                WITH ranked AS (
+                    SELECT r.role_id, r.member_name, r.group_name,
+                           COALESCE(u.personal_elo, 1200) AS elo,
+                           r.image_url,
+                           ROW_NUMBER() OVER (
+                               ORDER BY COALESCE(u.personal_elo, 1200) DESC, r.role_id
+                           ) AS rnk
+                    FROM role_info r
+                    LEFT JOIN user_elo u ON r.role_id = u.role_id AND u.user_id = %s
+                    WHERE {_ACTIVE_IDOL_PREDICATE}
+                )
+                SELECT role_id, member_name, group_name, elo, image_url
+                FROM ranked
+                ORDER BY -ln(GREATEST(RANDOM(), 1e-10)) * POWER(rnk, {_FIRST_PICK_ALPHA}) ASC
                 LIMIT 1;
-                """
+                """,
+                (user_id,),
             )
             idol_a = cur.fetchone()
 
             if not idol_a:
                 return None
 
-            role_id_a, _, _, global_elo_a, _ = idol_a
+            role_id_a, _, _, personal_elo_a, _ = idol_a
 
-            # 2. Find a close opponent B within +/- 150 ELO
+            # 2. Pick an opponent B using an exponentially weighted sample based on ELO closeness.
+            # We sample items with probability proportional to exp(-MAX(elo_diff - 50, 0) / 150).
+            # This creates a "flat" probability distribution for anyone within 50 ELO,
+            # ensuring they all have an equal uniform chance of being picked. Outside of 50 ELO,
+            # it decays less steeply to ensure enough random variety amongst opponents.
             cur.execute(
                 f"""
-                SELECT r.role_id, r.member_name, r.group_name, r.global_elo, r.image_url
+                SELECT r.role_id, r.member_name, r.group_name, COALESCE(u.personal_elo, 1200), r.image_url
                 FROM role_info r
+                LEFT JOIN user_elo u ON r.role_id = u.role_id AND u.user_id = %s
                 WHERE r.role_id != %s
                   AND {_ACTIVE_IDOL_PREDICATE}
-                  AND r.global_elo BETWEEN %s AND %s
-                ORDER BY RANDOM()
+                ORDER BY -ln(GREATEST(RANDOM(), 1e-10)) * EXP(GREATEST(ABS(COALESCE(u.personal_elo, 1200) - %s) - 50, 0::numeric) / 100.0) ASC
                 LIMIT 1;
                 """,
-                (role_id_a, global_elo_a - 150, global_elo_a + 150),
+                (user_id, role_id_a, personal_elo_a),
             )
             idol_b = cur.fetchone()
-
-            # If no close match found, just pick any random opponent
-            if not idol_b:
-                cur.execute(
-                    f"""
-                    SELECT r.role_id, r.member_name, r.group_name, r.global_elo, r.image_url
-                    FROM role_info r
-                    WHERE r.role_id != %s
-                      AND {_ACTIVE_IDOL_PREDICATE}
-                    ORDER BY RANDOM()
-                    LIMIT 1;
-                    """,
-                    (role_id_a,),
-                )
-                idol_b = cur.fetchone()
 
             if not idol_b:
                 return None  # Only 1 idol exists in DB
@@ -90,7 +125,7 @@ def record_vote(
     user_id: int, guild_id: int, winner_id: str, loser_id: str
 ) -> tuple[int, int, int, int, int, int]:
     """
-    Records a vote and updates global, guild, and personal ELO.
+    Records a vote and updates global, guild, and personal ELO and counters.
     Returns (global_winner_delta, global_loser_delta,
              guild_winner_delta, guild_loser_delta,
              personal_winner_delta, personal_loser_delta).
@@ -188,17 +223,92 @@ def record_vote(
                 """,
                 (pl_delta, user_id, loser_id),
             )
+            cur.execute(
+                """
+                UPDATE role_info
+                SET global_win_count = global_win_count + 1,
+                    global_match_count = global_match_count + 1
+                WHERE role_id = %s;
+                """,
+                (winner_id,),
+            )
+            cur.execute(
+                """
+                UPDATE role_info
+                SET global_match_count = global_match_count + 1
+                WHERE role_id = %s;
+                """,
+                (loser_id,),
+            )
+            cur.execute(
+                """
+                UPDATE guild_elo
+                SET win_count = win_count + 1,
+                    match_count = match_count + 1
+                WHERE guild_id = %s AND role_id = %s;
+                """,
+                (guild_id, winner_id),
+            )
+            cur.execute(
+                """
+                UPDATE guild_elo
+                SET match_count = match_count + 1
+                WHERE guild_id = %s AND role_id = %s;
+                """,
+                (guild_id, loser_id),
+            )
+            cur.execute(
+                """
+                UPDATE user_elo
+                SET win_count = win_count + 1,
+                    match_count = match_count + 1
+                WHERE user_id = %s AND role_id = %s;
+                """,
+                (user_id, winner_id),
+            )
+            cur.execute(
+                """
+                UPDATE user_elo
+                SET match_count = match_count + 1
+                WHERE user_id = %s AND role_id = %s;
+                """,
+                (user_id, loser_id),
+            )
 
             return gw_delta, gl_delta, sw_delta, sl_delta, pw_delta, pl_delta
 
 
-def get_global_leaderboard(limit: int = 10) -> list[tuple[str, str, int]]:
-    """Returns top idols by global ELO (member_name, group_name, global_elo)."""
+def _build_leaderboard(rows, vote_count) -> Leaderboard:
+    return Leaderboard(
+        entries=[
+            LeaderboardEntry(
+                role_id=row[0],
+                member_name=row[1],
+                group_name=row[2],
+                elo=row[3],
+                image_url=row[4],
+            )
+            for row in rows
+        ],
+        vote_count=int(vote_count or 0),
+    )
+
+
+def get_global_leaderboard(limit: int = 15) -> Leaderboard:
+    """Returns top idols by global ELO plus the global vote count."""
     with psycopg.connect(**CONN_DICT) as conn:
         with conn.cursor() as cur:
             cur.execute(
+                """
+                SELECT COALESCE(SUM(global_match_count), 0) / 2 AS vote_count
+                FROM role_info;
+                """
+            )
+            vote_count = cur.fetchone()[0]
+
+            cur.execute(
                 f"""
-                SELECT r.member_name, r.group_name, r.global_elo
+                SELECT r.role_id, r.member_name, r.group_name, r.global_elo, r.image_url
                 FROM role_info r
                 WHERE {_ACTIVE_IDOL_PREDICATE}
                 ORDER BY r.global_elo DESC
@@ -206,16 +316,26 @@ def get_global_leaderboard(limit: int = 10) -> list[tuple[str, str, int]]:
                 """,
                 (limit,),
             )
-            return cur.fetchall()
+            return _build_leaderboard(cur.fetchall(), vote_count)
 
 
-def get_guild_leaderboard(guild_id: int, limit: int = 10) -> list[tuple[str, str, int]]:
-    """Returns top idols by guild ELO for a server (member_name, group_name, guild_elo)."""
+def get_guild_leaderboard(guild_id: int, limit: int = 15) -> Leaderboard:
+    """Returns top idols by guild ELO for a server plus the server vote count."""
     with psycopg.connect(**CONN_DICT) as conn:
         with conn.cursor() as cur:
             cur.execute(
+                """
+                SELECT COALESCE(SUM(match_count), 0) / 2 AS vote_count
+                FROM guild_elo
+                WHERE guild_id = %s;
+                """,
+                (guild_id,),
+            )
+            vote_count = cur.fetchone()[0]
+
+            cur.execute(
                 f"""
-                SELECT r.member_name, r.group_name, g.guild_elo
+                SELECT r.role_id, r.member_name, r.group_name, g.guild_elo, r.image_url
                 FROM guild_elo g
                 JOIN role_info r ON g.role_id = r.role_id
                 WHERE g.guild_id = %s AND {_ACTIVE_IDOL_PREDICATE}
@@ -224,16 +344,26 @@ def get_guild_leaderboard(guild_id: int, limit: int = 10) -> list[tuple[str, str
                 """,
                 (guild_id, limit),
             )
-            return cur.fetchall()
+            return _build_leaderboard(cur.fetchall(), vote_count)
 
 
-def get_personal_leaderboard(user_id: int, limit: int = 10) -> list[tuple[str, str, int]]:
-    """Returns top idols by personal ELO for a user (member_name, group_name, personal_elo)."""
+def get_personal_leaderboard(user_id: int, limit: int = 15) -> Leaderboard:
+    """Returns top idols by personal ELO for a user plus the personal vote count."""
     with psycopg.connect(**CONN_DICT) as conn:
         with conn.cursor() as cur:
             cur.execute(
+                """
+                SELECT COALESCE(SUM(match_count), 0) / 2 AS vote_count
+                FROM user_elo
+                WHERE user_id = %s;
+                """,
+                (user_id,),
+            )
+            vote_count = cur.fetchone()[0]
+
+            cur.execute(
                 f"""
-                SELECT r.member_name, r.group_name, u.personal_elo
+                SELECT r.role_id, r.member_name, r.group_name, u.personal_elo, r.image_url
                 FROM user_elo u
                 JOIN role_info r ON u.role_id = r.role_id
                 WHERE u.user_id = %s AND {_ACTIVE_IDOL_PREDICATE}
@@ -242,4 +372,75 @@ def get_personal_leaderboard(user_id: int, limit: int = 10) -> list[tuple[str, s
                 """,
                 (user_id, limit),
             )
-            return cur.fetchall()
+            return _build_leaderboard(cur.fetchall(), vote_count)
+
+
+# ---------------------------------------------------------------------------
+# Daily bracket challenge
+# ---------------------------------------------------------------------------
+
+
+def get_daily_idols(
+    date: datetime.date | None = None,
+    deterministic: bool = False,
+) -> list[tuple[str, str, str, int, str]]:
+    """Set of 8 active idols for a given KST date (default: today).
+
+    When deterministic=True (default), the sample is seeded by the date's
+    ordinal so every user who runs /bias daily on the same KST day sees the
+    same 8 idols in the same bracket order. When deterministic=False, the
+    sample is freshly random per call — different users will see different
+    brackets even on the same day. Returns an empty list if fewer than 8
+    active idols exist.
+    """
+    if date is None:
+        date = _today_kst()
+
+    with psycopg.connect(**CONN_DICT) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""
+                SELECT r.role_id, r.member_name, r.group_name,
+                       COALESCE(r.global_elo, 1200), r.image_url
+                FROM role_info r
+                WHERE {_ACTIVE_IDOL_PREDICATE}
+                ORDER BY r.role_id
+                """
+            )
+            all_idols = cur.fetchall()
+
+    if len(all_idols) < 8:
+        return []
+
+    rng = random.Random(date.toordinal()) if deterministic else random.Random()
+    return rng.sample(all_idols, 8)
+
+
+def has_completed_daily(user_id: int, date: datetime.date | None = None) -> bool:
+    if date is None:
+        date = _today_kst()
+    with psycopg.connect(**CONN_DICT) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT 1 FROM bias_daily_completions
+                WHERE user_id = %s AND completion_date = %s;
+                """,
+                (user_id, date),
+            )
+            return cur.fetchone() is not None
+
+
+def record_daily_completion(user_id: int, date: datetime.date | None = None) -> None:
+    if date is None:
+        date = _today_kst()
+    with psycopg.connect(**CONN_DICT) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO bias_daily_completions (user_id, completion_date)
+                VALUES (%s, %s)
+                ON CONFLICT DO NOTHING;
+                """,
+                (user_id, date),
+            )
