@@ -2,6 +2,7 @@ import io
 import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from html import unescape
 from urllib.parse import urlparse
 
 import asyncpraw
@@ -51,6 +52,41 @@ def get_reddit_video_url(post: asyncpraw.models.Submission) -> str:
     raise ValueError(f"Could not find reddit video URL for {post.url}.")
 
 
+def get_gallery_urls(post: asyncpraw.models.Submission) -> list[str]:
+    """Return source media URLs for a Reddit gallery."""
+    post_data = post.__dict__
+    gallery_sources = [post_data]
+    gallery_sources.extend(post_data.get("crosspost_parent_list") or [])
+
+    for source_data in gallery_sources:
+        media_metadata = source_data.get("media_metadata")
+        if not media_metadata:
+            continue
+
+        gallery_items = (source_data.get("gallery_data") or {}).get("items") or []
+        if gallery_items:
+            images = [
+                media_metadata[item["media_id"]]
+                for item in gallery_items
+                if item.get("media_id") in media_metadata
+            ]
+        else:
+            images = media_metadata.values()
+
+        media_urls = []
+        for image in images:
+            source = image["s"]
+            if "u" in source:
+                media_urls.append(unescape(source["u"]))
+            elif "gif" in source:
+                media_urls.append(unescape(source["gif"]))
+            else:
+                raise ValueError(f"Can't find good keys in {post.url}.")
+        return media_urls
+
+    raise ValueError(f"Could not find gallery media metadata for {post.url}.")
+
+
 async def get_latest_posts(subreddit: str) -> list[asyncpraw.models.Submission]:
     """Get latest posts from kpopfap subreddit."""
     reddit = asyncpraw.Reddit(
@@ -83,16 +119,7 @@ def parse_post(post: asyncpraw.models.Submission) -> RedditPost:
     """Parse a single reddit post."""
     if "gallery" in post.url:
         is_gallery = True
-        # We have to extract the proper CDN urls from each image
-        media_urls = []
-        for image in post.__dict__["media_metadata"].values():
-            source = image["s"]
-            if "u" in source:
-                media_urls.append(source["u"])
-            elif "gif" in source:
-                media_urls.append(source["gif"])
-            else:
-                raise ValueError(f"Can't find good keys in {post.url}.")
+        media_urls = get_gallery_urls(post)
     elif "v.redd.it" in post.url:
         # For uploaded videos (non-imgur)
         is_gallery = True
@@ -108,6 +135,25 @@ def parse_post(post: asyncpraw.models.Submission) -> RedditPost:
     )
 
 
+async def get_and_parse_posts(subreddit: str) -> list[RedditPost]:
+    """Fetch and parse latest posts for a subreddit."""
+    try:
+        posts = await get_latest_posts(subreddit)
+    except Exception as e:
+        print(f"Could not get posts from subreddit: {subreddit}. Error: {str(e)}")
+        return []
+
+    parsed_posts: list[RedditPost] = []
+    for post in posts:
+        try:
+            parsed_posts.append(parse_post(post))
+        except Exception as e:
+            print(f"Could not parse post {post.title} from subreddit {subreddit}. Error: {str(e)}")
+            continue
+
+    return parsed_posts
+
+
 async def update_reddit_feeds(bot: commands.Bot, lookback_secs: int) -> None:
     """Main routine for scanning new kpopfap reddit posts and sending updates."""
 
@@ -120,28 +166,12 @@ async def update_reddit_feeds(bot: commands.Bot, lookback_secs: int) -> None:
         posts_by_subreddit = {}
 
         for subreddit in all_subreddits:
-            # Try to fetch from the subreddit
-            try:
-                posts = await get_latest_posts(subreddit)
-            except Exception as e:
-                print(f"Could not get posts from subreddit: {subreddit}. Error: {str(e)}")
-                posts = []
-
-            # Get the posts that are in the lookback window
-            parsed_posts: list[RedditPost] = []
-            for post in posts:
-                try:
-                    parsed_post = parse_post(post)
-                except Exception as e:
-                    print(
-                        f"Could not parse post {post.title} from subreddit {subreddit}. Error: {str(e)}"
-                    )
-                    continue
-
-                if curr_time - parsed_post.created_utc < lookback_secs:
-                    parsed_posts.append(parsed_post)
-            posts_by_subreddit[subreddit] = sorted(parsed_posts, key=lambda x: x.created_utc)
-            num_new_posts[subreddit] = len(parsed_posts)
+            parsed_posts = await get_and_parse_posts(subreddit)
+            recent_posts = [
+                post for post in parsed_posts if curr_time - post.created_utc < lookback_secs
+            ]
+            posts_by_subreddit[subreddit] = sorted(recent_posts, key=lambda x: x.created_utc)
+            num_new_posts[subreddit] = len(recent_posts)
 
     except Exception as e:
         print(f"Error with fetching latest posts: {str(e)}")
