@@ -216,13 +216,8 @@ def build_group_leaderboard_embeds(
     lines = []
     for rank, entry in enumerate(leaderboard.entries, 1):
         prefix = medals.get(rank, f"**#{rank}**")
-        member_basis = min(leaderboard.top_n, entry.ranked_member_count)
         top_members = ", ".join(entry.top_members)
-        lines.append(
-            f"{prefix}  **{entry.group_name}** — **{entry.elo}** "
-            f"avg top {member_basis} · {entry.member_count} ranked members\n"
-            f"Top: {top_members}"
-        )
+        lines.append(f"{prefix}  **{entry.group_name}** — **{entry.elo}** · Top: {top_members}")
 
     header = discord.Embed(
         title=f"🏆 {title}",
@@ -231,7 +226,7 @@ def build_group_leaderboard_embeds(
         url=_EMBED_GROUP_URL,
     )
     header.set_footer(
-        text=f"Based on {leaderboard.vote_count:,} votes. Score is average ELO of top {leaderboard.top_n} ranked members."
+        text=f"Based on {leaderboard.vote_count:,} votes. Group ELO is average of top {leaderboard.top_n} ranked members."
     )
     if leaderboard.entries and leaderboard.entries[0].image_url:
         header.set_image(url=leaderboard.entries[0].image_url)
