@@ -37,10 +37,17 @@ from src.db.utils import (
 from src.llm_chat import get_llm_chat_response
 from src.reaction.gather import gather_dead_link, gather_reactions
 from src.reddit_feeds import update_reddit_feeds
-from src.discord_ui.bias_rater import VoteView, build_leaderboard_embeds
+from src.discord_ui.bias_rater import (
+    VoteView,
+    build_group_leaderboard_embeds,
+    build_leaderboard_embeds,
+)
 from src.db.bias_rater import (
+    get_global_group_leaderboard,
     get_global_leaderboard,
+    get_guild_group_leaderboard,
     get_guild_leaderboard,
+    get_personal_group_leaderboard,
     get_personal_leaderboard,
     has_completed_daily,
 )
@@ -177,7 +184,9 @@ async def feed(interaction: discord.Interaction, query: str | None = None):
     # Count emotes and update database
     sent_message = await interaction.channel.fetch_message(sent_message.id)
     await gather_reactions(
-        message=sent_message, url=role_ids_and_urls[0][1], role_id=role_ids_and_urls[0][0]
+        message=sent_message,
+        url=role_ids_and_urls[0][1],
+        role_id=role_ids_and_urls[0][0],
     )
 
     await asyncio.to_thread(add_stat_count, "feed")
@@ -190,7 +199,10 @@ async def feed(interaction: discord.Interaction, query: str | None = None):
     skip="Number of images to skip from the beginning. Defaults to 0.",
 )
 async def latest(
-    interaction: discord.Interaction, query: str | None = None, num_images: int = 5, skip: int = 0
+    interaction: discord.Interaction,
+    query: str | None = None,
+    num_images: int = 5,
+    skip: int = 0,
 ):
     if not await asyncio.to_thread(has_completed_daily, interaction.user.id):
         await interaction.response.send_message(
@@ -260,7 +272,10 @@ async def latest(
 @discord.app_commands.default_permissions(manage_guild=True)
 @discord.app_commands.guild_only()
 async def autofeed(
-    interaction: discord.Interaction, query: str | None = None, interval: int = 20, count: int = 5
+    interaction: discord.Interaction,
+    query: str | None = None,
+    interval: int = 20,
+    count: int = 5,
 ):
     if not await asyncio.to_thread(has_completed_daily, interaction.user.id):
         await interaction.response.send_message(
@@ -270,7 +285,8 @@ async def autofeed(
         return
     if interval < 2 or interval > 60 * 60 * 24:
         await interaction.response.send_message(
-            f"Interval must be between 2 seconds and 24 hours ({60 * 60 * 24}).", ephemeral=True
+            f"Interval must be between 2 seconds and 24 hours ({60 * 60 * 24}).",
+            ephemeral=True,
         )
         return
     if count > 120:
@@ -484,7 +500,8 @@ class RedditFeed(discord.app_commands.Group):
         await asyncio.to_thread(add_stat_count, "reddit_set_feed")
 
     @discord.app_commands.command(
-        name="list_feeds", description="List the existing subscriptions for this server."
+        name="list_feeds",
+        description="List the existing subscriptions for this server.",
     )
     async def list_feeds(self, interaction: discord.Interaction):
         try:
@@ -572,7 +589,11 @@ class Admin(discord.app_commands.Group):
     )
     async def cancel_all_autofeeds(self, interaction: discord.Interaction):
         await bot.custom_event_queue.put(
-            {"type": "cancel_command", "guild_id": interaction.guild_id, "command_name": "autofeed"}
+            {
+                "type": "cancel_command",
+                "guild_id": interaction.guild_id,
+                "command_name": "autofeed",
+            }
         )
         text = "Cancelling all autofeed commands"
         print(f"Guild: {interaction.guild_id} Request: {text}")
@@ -580,7 +601,8 @@ class Admin(discord.app_commands.Group):
         await asyncio.to_thread(add_stat_count, "cancel_all_autofeeds")
 
     @discord.app_commands.command(
-        name="set_age_limit", description="Set the minimum age of idol at content upload time."
+        name="set_age_limit",
+        description="Set the minimum age of idol at content upload time.",
     )
     @discord.app_commands.describe(min_age="Minimum age. E.g. `18 year 6 month`, `19 year 3 week`")
     async def set_age_limit(self, interaction: discord.Interaction, min_age: str):
@@ -597,7 +619,8 @@ class Admin(discord.app_commands.Group):
         try:
             if "year" not in min_age or int(min_age.split("year")[0]) < 18:
                 await interaction.response.send_message(
-                    "Min age should be at least 18, e.g. `18 year 1 month`", ephemeral=True
+                    "Min age should be at least 18, e.g. `18 year 1 month`",
+                    ephemeral=True,
                 )
 
             else:
@@ -690,6 +713,36 @@ class BiasRater(discord.app_commands.Group):
         await interaction.edit_original_response(embeds=embeds)
         await asyncio.to_thread(add_stat_count, "bias_leaderboard")
 
+    @discord.app_commands.command(name="groups", description="Show group ELO leaderboard")
+    @discord.app_commands.describe(scope="global, server, or personal")
+    @discord.app_commands.choices(
+        scope=[
+            discord.app_commands.Choice(name="Global", value="global"),
+            discord.app_commands.Choice(name="Server", value="server"),
+            discord.app_commands.Choice(name="Personal", value="personal"),
+        ]
+    )
+    async def groups(self, interaction: discord.Interaction, scope: str = "personal"):
+        # Ack first; the DB query below can exceed Discord's 3s deadline on a cold connection.
+        await interaction.response.defer()
+        if scope == "global":
+            tops = await asyncio.to_thread(get_global_group_leaderboard)
+            title = "Global Group Leaderboard"
+        elif scope == "server":
+            tops = await asyncio.to_thread(get_guild_group_leaderboard, interaction.guild_id)
+            title = f"Server Group Leaderboard for {interaction.guild.name}"
+        else:
+            tops = await asyncio.to_thread(get_personal_group_leaderboard, interaction.user.id)
+            title = f"Personal Group Leaderboard for {interaction.user.display_name}"
+
+        if not tops.entries:
+            await interaction.edit_original_response(content="No votes recorded yet!")
+            return
+
+        embeds = build_group_leaderboard_embeds(title, tops)
+        await interaction.edit_original_response(embeds=embeds)
+        await asyncio.to_thread(add_stat_count, "bias_groups")
+
     @discord.app_commands.command(
         name="autofeed",
         description="Feast on kpop content automatically based on your idol bias rankings",
@@ -721,7 +774,8 @@ class BiasRater(discord.app_commands.Group):
             return
         if interval < 2 or interval > 60 * 60 * 24:
             await interaction.response.send_message(
-                f"Interval must be between 2 seconds and 24 hours ({60 * 60 * 24}).", ephemeral=True
+                f"Interval must be between 2 seconds and 24 hours ({60 * 60 * 24}).",
+                ephemeral=True,
             )
             return
         if count > 120:

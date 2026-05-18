@@ -45,6 +45,23 @@ class Leaderboard:
     vote_count: int
 
 
+@dataclass(frozen=True)
+class GroupLeaderboardEntry:
+    group_name: str
+    elo: int
+    member_count: int
+    ranked_member_count: int
+    top_members: list[str]
+    image_url: str | None
+
+
+@dataclass(frozen=True)
+class GroupLeaderboard:
+    entries: list[GroupLeaderboardEntry]
+    vote_count: int
+    top_n: int
+
+
 def calculate_elo_delta(winner_elo: int, loser_elo: int, k: int = 32) -> Tuple[int, int]:
     """Calculate the expected ELO shift for a win/loss."""
     expected_winner = 1 / (1 + 10 ** ((loser_elo - winner_elo) / 400))
@@ -294,6 +311,24 @@ def _build_leaderboard(rows, vote_count) -> Leaderboard:
     )
 
 
+def _build_group_leaderboard(rows, vote_count, top_n: int) -> GroupLeaderboard:
+    return GroupLeaderboard(
+        entries=[
+            GroupLeaderboardEntry(
+                group_name=row[0],
+                elo=row[1],
+                member_count=row[2],
+                ranked_member_count=row[3],
+                top_members=list(row[4] or []),
+                image_url=row[5],
+            )
+            for row in rows
+        ],
+        vote_count=int(vote_count or 0),
+        top_n=top_n,
+    )
+
+
 def get_global_leaderboard(limit: int = 15) -> Leaderboard:
     """Returns top idols by global ELO plus the global vote count."""
     with psycopg.connect(**CONN_DICT) as conn:
@@ -317,6 +352,52 @@ def get_global_leaderboard(limit: int = 15) -> Leaderboard:
                 (limit,),
             )
             return _build_leaderboard(cur.fetchall(), vote_count)
+
+
+def get_global_group_leaderboard(limit: int = 15, top_n: int = 3) -> GroupLeaderboard:
+    """Returns top groups by average global ELO of their top N active members."""
+    with psycopg.connect(**CONN_DICT) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT COALESCE(SUM(global_match_count), 0) / 2 AS vote_count
+                FROM role_info;
+                """
+            )
+            vote_count = cur.fetchone()[0]
+
+            cur.execute(
+                f"""
+                WITH idol_scores AS (
+                    SELECT r.group_name,
+                           r.member_name,
+                           r.image_url,
+                           r.global_elo AS elo,
+                           COUNT(*) OVER (PARTITION BY r.group_name) AS member_count,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY r.group_name
+                               ORDER BY r.global_elo DESC, r.member_name
+                           ) AS member_rank
+                    FROM role_info r
+                    WHERE {_ACTIVE_IDOL_PREDICATE}
+                      AND r.group_name IS NOT NULL
+                      AND TRIM(r.group_name) != ''
+                )
+                SELECT group_name,
+                       ROUND(AVG(elo))::int AS elo,
+                       MAX(member_count)::int AS member_count,
+                       COUNT(*)::int AS ranked_member_count,
+                       ARRAY_AGG(member_name ORDER BY elo DESC, member_name) AS top_members,
+                       (ARRAY_AGG(image_url ORDER BY elo DESC, member_name))[1] AS image_url
+                FROM idol_scores
+                WHERE member_rank <= %s
+                GROUP BY group_name
+                ORDER BY elo DESC, group_name
+                LIMIT %s;
+                """,
+                (top_n, limit),
+            )
+            return _build_group_leaderboard(cur.fetchall(), vote_count, top_n)
 
 
 def get_guild_leaderboard(guild_id: int, limit: int = 15) -> Leaderboard:
@@ -347,6 +428,56 @@ def get_guild_leaderboard(guild_id: int, limit: int = 15) -> Leaderboard:
             return _build_leaderboard(cur.fetchall(), vote_count)
 
 
+def get_guild_group_leaderboard(guild_id: int, limit: int = 15, top_n: int = 3) -> GroupLeaderboard:
+    """Returns top groups by average guild ELO of their top N voted active members."""
+    with psycopg.connect(**CONN_DICT) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT COALESCE(SUM(match_count), 0) / 2 AS vote_count
+                FROM guild_elo
+                WHERE guild_id = %s;
+                """,
+                (guild_id,),
+            )
+            vote_count = cur.fetchone()[0]
+
+            cur.execute(
+                f"""
+                WITH idol_scores AS (
+                    SELECT r.group_name,
+                           r.member_name,
+                           r.image_url,
+                           g.guild_elo AS elo,
+                           COUNT(*) OVER (PARTITION BY r.group_name) AS member_count,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY r.group_name
+                               ORDER BY g.guild_elo DESC, r.member_name
+                           ) AS member_rank
+                    FROM guild_elo g
+                    JOIN role_info r ON g.role_id = r.role_id
+                    WHERE g.guild_id = %s
+                      AND {_ACTIVE_IDOL_PREDICATE}
+                      AND r.group_name IS NOT NULL
+                      AND TRIM(r.group_name) != ''
+                )
+                SELECT group_name,
+                       ROUND(AVG(elo))::int AS elo,
+                       MAX(member_count)::int AS member_count,
+                       COUNT(*)::int AS ranked_member_count,
+                       ARRAY_AGG(member_name ORDER BY elo DESC, member_name) AS top_members,
+                       (ARRAY_AGG(image_url ORDER BY elo DESC, member_name))[1] AS image_url
+                FROM idol_scores
+                WHERE member_rank <= %s
+                GROUP BY group_name
+                ORDER BY elo DESC, group_name
+                LIMIT %s;
+                """,
+                (guild_id, top_n, limit),
+            )
+            return _build_group_leaderboard(cur.fetchall(), vote_count, top_n)
+
+
 def get_personal_leaderboard(user_id: int, limit: int = 15) -> Leaderboard:
     """Returns top idols by personal ELO for a user plus the personal vote count."""
     with psycopg.connect(**CONN_DICT) as conn:
@@ -373,6 +504,58 @@ def get_personal_leaderboard(user_id: int, limit: int = 15) -> Leaderboard:
                 (user_id, limit),
             )
             return _build_leaderboard(cur.fetchall(), vote_count)
+
+
+def get_personal_group_leaderboard(
+    user_id: int, limit: int = 15, top_n: int = 3
+) -> GroupLeaderboard:
+    """Returns top groups by average personal ELO of their top N voted active members."""
+    with psycopg.connect(**CONN_DICT) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT COALESCE(SUM(match_count), 0) / 2 AS vote_count
+                FROM user_elo
+                WHERE user_id = %s;
+                """,
+                (user_id,),
+            )
+            vote_count = cur.fetchone()[0]
+
+            cur.execute(
+                f"""
+                WITH idol_scores AS (
+                    SELECT r.group_name,
+                           r.member_name,
+                           r.image_url,
+                           u.personal_elo AS elo,
+                           COUNT(*) OVER (PARTITION BY r.group_name) AS member_count,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY r.group_name
+                               ORDER BY u.personal_elo DESC, r.member_name
+                           ) AS member_rank
+                    FROM user_elo u
+                    JOIN role_info r ON u.role_id = r.role_id
+                    WHERE u.user_id = %s
+                      AND {_ACTIVE_IDOL_PREDICATE}
+                      AND r.group_name IS NOT NULL
+                      AND TRIM(r.group_name) != ''
+                )
+                SELECT group_name,
+                       ROUND(AVG(elo))::int AS elo,
+                       MAX(member_count)::int AS member_count,
+                       COUNT(*)::int AS ranked_member_count,
+                       ARRAY_AGG(member_name ORDER BY elo DESC, member_name) AS top_members,
+                       (ARRAY_AGG(image_url ORDER BY elo DESC, member_name))[1] AS image_url
+                FROM idol_scores
+                WHERE member_rank <= %s
+                GROUP BY group_name
+                ORDER BY elo DESC, group_name
+                LIMIT %s;
+                """,
+                (user_id, top_n, limit),
+            )
+            return _build_group_leaderboard(cur.fetchall(), vote_count, top_n)
 
 
 # ---------------------------------------------------------------------------
