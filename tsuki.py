@@ -38,6 +38,9 @@ from src.llm_chat import get_llm_chat_response
 from src.reaction.gather import gather_dead_link, gather_reactions
 from src.reddit_feeds import update_reddit_feeds
 from src.discord_ui.bias_rater import (
+    LEADERBOARD_MAX_ENTRIES,
+    LEADERBOARD_PAGE_SIZE,
+    LeaderboardView,
     VoteView,
     build_group_leaderboard_embeds,
     build_leaderboard_embeds,
@@ -696,21 +699,28 @@ class BiasRater(discord.app_commands.Group):
         # Ack first; the DB query below can exceed Discord's 3s deadline on a cold connection.
         await interaction.response.defer()
         if scope == "global":
-            tops = await asyncio.to_thread(get_global_leaderboard)
+            tops = await asyncio.to_thread(get_global_leaderboard, LEADERBOARD_MAX_ENTRIES)
             title = "Global Idol Leaderboard"
         elif scope == "server":
-            tops = await asyncio.to_thread(get_guild_leaderboard, interaction.guild_id)
+            tops = await asyncio.to_thread(
+                get_guild_leaderboard, interaction.guild_id, LEADERBOARD_MAX_ENTRIES
+            )
             title = f"Server Leaderboard for {interaction.guild.name}"
         else:
-            tops = await asyncio.to_thread(get_personal_leaderboard, interaction.user.id)
+            tops = await asyncio.to_thread(
+                get_personal_leaderboard, interaction.user.id, LEADERBOARD_MAX_ENTRIES
+            )
             title = f"Personal Leaderboard for {interaction.user.display_name}"
 
         if not tops.entries:
             await interaction.edit_original_response(content="No votes recorded yet!")
             return
 
-        embeds = build_leaderboard_embeds(title, tops)
-        await interaction.edit_original_response(embeds=embeds)
+        view = LeaderboardView(title, tops) if len(tops.entries) > LEADERBOARD_PAGE_SIZE else None
+        embeds = view.embeds if view else build_leaderboard_embeds(title, tops)
+        message = await interaction.edit_original_response(embeds=embeds, view=view)
+        if view:
+            view.message = message
         await asyncio.to_thread(add_stat_count, "bias_leaderboard")
 
     @discord.app_commands.command(name="groups", description="Show group ELO leaderboard")
