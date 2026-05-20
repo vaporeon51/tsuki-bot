@@ -237,6 +237,8 @@ class LeaderboardView(discord.ui.View):
             ),
         )
         self.message: discord.Message | None = None
+        if self.total_pages < 3:
+            self.remove_item(self.page_three)
         self._sync_buttons()
 
     @property
@@ -244,8 +246,9 @@ class LeaderboardView(discord.ui.View):
         return build_leaderboard_embeds(self.title, self.leaderboard, self.page)
 
     def _sync_buttons(self) -> None:
-        self.previous_page.disabled = self.page <= 0
-        self.next_page.disabled = self.page >= self.total_pages - 1
+        self.page_one.disabled = self.page == 0
+        self.page_two.disabled = self.page == 1
+        self.page_three.disabled = self.page == 2
 
     async def on_timeout(self) -> None:
         for item in self.children:
@@ -256,17 +259,22 @@ class LeaderboardView(discord.ui.View):
             except Exception:
                 pass
 
-    @discord.ui.button(label="Previous", style=discord.ButtonStyle.secondary, emoji="⬅️")
-    async def previous_page(self, interaction: discord.Interaction, button: discord.ui.Button):
-        self.page = max(0, self.page - 1)
+    async def _set_page(self, interaction: discord.Interaction, page: int) -> None:
+        self.page = min(self.total_pages - 1, max(0, page))
         self._sync_buttons()
         await interaction.response.edit_message(embeds=self.embeds, view=self)
 
-    @discord.ui.button(label="Next", style=discord.ButtonStyle.secondary, emoji="➡️")
-    async def next_page(self, interaction: discord.Interaction, button: discord.ui.Button):
-        self.page = min(self.total_pages - 1, self.page + 1)
-        self._sync_buttons()
-        await interaction.response.edit_message(embeds=self.embeds, view=self)
+    @discord.ui.button(label="1", style=discord.ButtonStyle.secondary)
+    async def page_one(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._set_page(interaction, 0)
+
+    @discord.ui.button(label="2", style=discord.ButtonStyle.secondary)
+    async def page_two(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._set_page(interaction, 1)
+
+    @discord.ui.button(label="3", style=discord.ButtonStyle.secondary)
+    async def page_three(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._set_page(interaction, 2)
 
 
 def build_group_leaderboard_embeds(
