@@ -46,6 +46,8 @@ from src.discord_ui.bias_rater import (
     build_leaderboard_embeds,
 )
 from src.db.bias_rater import (
+    cleanup_accumulating_tables,
+    create_weekly_leaderboard_snapshots,
     get_global_group_leaderboard,
     get_global_leaderboard,
     get_guild_group_leaderboard,
@@ -92,6 +94,11 @@ class TsukiBot(commands.Bot):
 bot = TsukiBot()
 
 
+def start_loop_once(loop: tasks.Loop) -> None:
+    if not loop.is_running():
+        loop.start()
+
+
 @tasks.loop(seconds=60 * 60 * 12)
 async def update_content_loop():
     try:
@@ -114,6 +121,26 @@ async def update_birthday_feeds_loop():
         await update_birthday_feeds(bot=bot)
     except Exception as e:
         print(f"Error with birthday update:\n{str(e)}")
+
+
+@tasks.loop(seconds=60 * 60 * 6)
+async def update_bias_leaderboard_snapshots_loop():
+    try:
+        inserted = await asyncio.to_thread(create_weekly_leaderboard_snapshots)
+        if any(inserted.values()):
+            print(f"Created bias leaderboard snapshots: {inserted}")
+    except Exception as e:
+        print(f"Error with bias leaderboard snapshots:\n{str(e)}")
+
+
+@tasks.loop(seconds=60 * 60 * 24)
+async def cleanup_accumulating_tables_loop():
+    try:
+        deleted = await asyncio.to_thread(cleanup_accumulating_tables)
+        if any(deleted.values()):
+            print(f"Cleaned up accumulating tables: {deleted}")
+    except Exception as e:
+        print(f"Error with accumulating table cleanup:\n{str(e)}")
 
 
 @bot.event
@@ -140,9 +167,11 @@ async def on_ready():
             print("Could not get server info for:", server.name, str(e))
 
     if not IS_DEV:
-        update_content_loop.start()
-        update_reddit_feeds_loop.start()
-        update_birthday_feeds_loop.start()
+        start_loop_once(update_content_loop)
+        start_loop_once(update_reddit_feeds_loop)
+        start_loop_once(update_birthday_feeds_loop)
+        start_loop_once(update_bias_leaderboard_snapshots_loop)
+        start_loop_once(cleanup_accumulating_tables_loop)
 
 
 @bot.tree.command(name="feed", description="Get random kpop content using idol or group name.")

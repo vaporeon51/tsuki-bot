@@ -15,6 +15,13 @@ def _today_kst() -> datetime.date:
     return datetime.datetime.now(_KST).date()
 
 
+def _week_start_kst(date: datetime.date | None = None) -> datetime.date:
+    """Monday date for the KST week containing `date`."""
+    if date is None:
+        date = _today_kst()
+    return date - datetime.timedelta(days=date.weekday())
+
+
 # Only idols with both a member name and an image_url participate in matchups/leaderboards.
 # All queries alias role_info as `r` so this predicate is reusable without string surgery.
 _ACTIVE_IDOL_PREDICATE = (
@@ -28,6 +35,7 @@ _ACTIVE_IDOL_PREDICATE = (
 # toward the user's higher-ELO idols while keeping plenty of exploration. Raise for
 # more top-heavy picks, lower for more uniform.
 _FIRST_PICK_ALPHA = 0.5
+LEADERBOARD_SNAPSHOT_LIMIT = 45
 
 
 @dataclass(frozen=True)
@@ -346,7 +354,7 @@ def get_global_leaderboard(limit: int = 15) -> Leaderboard:
                 SELECT r.role_id, r.member_name, r.group_name, r.global_elo, r.image_url
                 FROM role_info r
                 WHERE {_ACTIVE_IDOL_PREDICATE}
-                ORDER BY r.global_elo DESC
+                ORDER BY r.global_elo DESC, r.member_name, r.role_id
                 LIMIT %s;
                 """,
                 (limit,),
@@ -420,7 +428,7 @@ def get_guild_leaderboard(guild_id: int, limit: int = 15) -> Leaderboard:
                 FROM guild_elo g
                 JOIN role_info r ON g.role_id = r.role_id
                 WHERE g.guild_id = %s AND {_ACTIVE_IDOL_PREDICATE}
-                ORDER BY g.guild_elo DESC
+                ORDER BY g.guild_elo DESC, r.member_name, r.role_id
                 LIMIT %s;
                 """,
                 (guild_id, limit),
@@ -498,7 +506,7 @@ def get_personal_leaderboard(user_id: int, limit: int = 15) -> Leaderboard:
                 FROM user_elo u
                 JOIN role_info r ON u.role_id = r.role_id
                 WHERE u.user_id = %s AND {_ACTIVE_IDOL_PREDICATE}
-                ORDER BY u.personal_elo DESC
+                ORDER BY u.personal_elo DESC, r.member_name, r.role_id
                 LIMIT %s;
                 """,
                 (user_id, limit),
@@ -627,3 +635,327 @@ def record_daily_completion(user_id: int, date: datetime.date | None = None) -> 
                 """,
                 (user_id, date),
             )
+
+
+# ---------------------------------------------------------------------------
+# Leaderboard snapshots and retention cleanup
+# ---------------------------------------------------------------------------
+
+
+def _fetch_latest_snapshot_rows(
+    cur,
+    scope_type: str,
+    scope_id: int,
+    snapshot_period: str,
+    before_date: datetime.date,
+) -> list[tuple[str, int, int]]:
+    cur.execute(
+        """
+        SELECT role_id, rank, elo
+        FROM bias_leaderboard_snapshots
+        WHERE scope_type = %s
+          AND scope_id = %s
+          AND snapshot_period = %s
+          AND snapshot_date = (
+              SELECT MAX(snapshot_date)
+              FROM bias_leaderboard_snapshots
+              WHERE scope_type = %s
+                AND scope_id = %s
+                AND snapshot_period = %s
+                AND snapshot_date < %s
+          )
+        ORDER BY rank;
+        """,
+        (
+            scope_type,
+            scope_id,
+            snapshot_period,
+            scope_type,
+            scope_id,
+            snapshot_period,
+            before_date,
+        ),
+    )
+    return [(row[0], row[1], row[2]) for row in cur.fetchall()]
+
+
+def _scope_has_snapshot(
+    cur,
+    scope_type: str,
+    scope_id: int,
+    snapshot_period: str,
+    snapshot_date: datetime.date,
+) -> bool:
+    cur.execute(
+        """
+        SELECT 1
+        FROM bias_leaderboard_snapshots
+        WHERE scope_type = %s
+          AND scope_id = %s
+          AND snapshot_period = %s
+          AND snapshot_date = %s
+        LIMIT 1;
+        """,
+        (scope_type, scope_id, snapshot_period, snapshot_date),
+    )
+    return cur.fetchone() is not None
+
+
+def _insert_snapshot_if_changed(
+    cur,
+    snapshot_date: datetime.date,
+    snapshot_period: str,
+    scope_type: str,
+    scope_id: int,
+    rows: list[tuple[str, int, int, int]],
+) -> bool:
+    """Insert sparse snapshot rows for one scope.
+
+    rows are (role_id, rank, elo, vote_count). Returns True when a snapshot
+    was inserted. If this week already has a snapshot, or the current top list
+    matches the previous stored snapshot, no rows are written.
+    """
+    if not rows or _scope_has_snapshot(
+        cur, scope_type, scope_id, snapshot_period, snapshot_date
+    ):
+        return False
+
+    current = [(role_id, rank, elo) for role_id, rank, elo, _ in rows]
+    previous = _fetch_latest_snapshot_rows(
+        cur, scope_type, scope_id, snapshot_period, snapshot_date
+    )
+    if previous == current:
+        return False
+
+    cur.executemany(
+        """
+        INSERT INTO bias_leaderboard_snapshots (
+            snapshot_date,
+            snapshot_period,
+            scope_type,
+            scope_id,
+            role_id,
+            rank,
+            elo,
+            vote_count
+        )
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+        ON CONFLICT DO NOTHING;
+        """,
+        [
+            (
+                snapshot_date,
+                snapshot_period,
+                scope_type,
+                scope_id,
+                role_id,
+                rank,
+                elo,
+                vote_count,
+            )
+            for role_id, rank, elo, vote_count in rows
+        ],
+    )
+    return True
+
+
+def _fetch_global_snapshot_rows(cur, limit: int) -> list[tuple[str, int, int, int]]:
+    cur.execute(
+        f"""
+        WITH ranked AS (
+            SELECT r.role_id,
+                   r.global_elo AS elo,
+                   ROW_NUMBER() OVER (
+                       ORDER BY r.global_elo DESC, r.member_name, r.role_id
+                   ) AS rank,
+                   (
+                       SELECT (COALESCE(SUM(global_match_count), 0) / 2)::int
+                       FROM role_info
+                   ) AS vote_count
+            FROM role_info r
+            WHERE {_ACTIVE_IDOL_PREDICATE}
+        )
+        SELECT role_id, rank::int, elo, vote_count
+        FROM ranked
+        WHERE rank <= %s
+        ORDER BY rank;
+        """,
+        (limit,),
+    )
+    return cur.fetchall()
+
+
+def _fetch_guild_snapshot_rows(
+    cur, guild_id: int, limit: int
+) -> list[tuple[str, int, int, int]]:
+    cur.execute(
+        f"""
+        WITH ranked AS (
+            SELECT r.role_id,
+                   g.guild_elo AS elo,
+                   ROW_NUMBER() OVER (
+                       ORDER BY g.guild_elo DESC, r.member_name, r.role_id
+                   ) AS rank,
+                   (
+                       SELECT (COALESCE(SUM(match_count), 0) / 2)::int
+                       FROM guild_elo
+                       WHERE guild_id = %s
+                   ) AS vote_count
+            FROM guild_elo g
+            JOIN role_info r ON g.role_id = r.role_id
+            WHERE g.guild_id = %s
+              AND {_ACTIVE_IDOL_PREDICATE}
+        )
+        SELECT role_id, rank::int, elo, vote_count
+        FROM ranked
+        WHERE rank <= %s
+        ORDER BY rank;
+        """,
+        (guild_id, guild_id, limit),
+    )
+    return cur.fetchall()
+
+
+def _fetch_personal_snapshot_rows(
+    cur, user_id: int, limit: int
+) -> list[tuple[str, int, int, int]]:
+    cur.execute(
+        f"""
+        WITH ranked AS (
+            SELECT r.role_id,
+                   u.personal_elo AS elo,
+                   ROW_NUMBER() OVER (
+                       ORDER BY u.personal_elo DESC, r.member_name, r.role_id
+                   ) AS rank,
+                   (
+                       SELECT (COALESCE(SUM(match_count), 0) / 2)::int
+                       FROM user_elo
+                       WHERE user_id = %s
+                   ) AS vote_count
+            FROM user_elo u
+            JOIN role_info r ON u.role_id = r.role_id
+            WHERE u.user_id = %s
+              AND {_ACTIVE_IDOL_PREDICATE}
+        )
+        SELECT role_id, rank::int, elo, vote_count
+        FROM ranked
+        WHERE rank <= %s
+        ORDER BY rank;
+        """,
+        (user_id, user_id, limit),
+    )
+    return cur.fetchall()
+
+
+def create_weekly_leaderboard_snapshots(
+    snapshot_date: datetime.date | None = None,
+    limit: int = LEADERBOARD_SNAPSHOT_LIMIT,
+) -> dict[str, int]:
+    """Create sparse weekly snapshots for global, guild, and personal idol leaderboards.
+
+    `snapshot_date` is normalized to the Monday of its KST week. For each scope,
+    the current top `limit` rows are compared to that scope's latest prior
+    weekly snapshot. Rows are inserted only if rank/order/ELO changed.
+    """
+    snapshot_date = _week_start_kst(snapshot_date)
+    snapshot_period = "weekly"
+    inserted = {"global": 0, "guild": 0, "personal": 0}
+
+    with psycopg.connect(**CONN_DICT) as conn:
+        with conn.cursor() as cur:
+            if _insert_snapshot_if_changed(
+                cur,
+                snapshot_date,
+                snapshot_period,
+                "global",
+                0,
+                _fetch_global_snapshot_rows(cur, limit),
+            ):
+                inserted["global"] += 1
+
+            cur.execute(
+                """
+                SELECT DISTINCT guild_id
+                FROM guild_elo
+                WHERE match_count > 0
+                ORDER BY guild_id;
+                """
+            )
+            guild_ids = [row[0] for row in cur.fetchall()]
+            for guild_id in guild_ids:
+                if _insert_snapshot_if_changed(
+                    cur,
+                    snapshot_date,
+                    snapshot_period,
+                    "guild",
+                    guild_id,
+                    _fetch_guild_snapshot_rows(cur, guild_id, limit),
+                ):
+                    inserted["guild"] += 1
+
+            cur.execute(
+                """
+                SELECT DISTINCT user_id
+                FROM user_elo
+                WHERE match_count > 0
+                ORDER BY user_id;
+                """
+            )
+            user_ids = [row[0] for row in cur.fetchall()]
+            for user_id in user_ids:
+                if _insert_snapshot_if_changed(
+                    cur,
+                    snapshot_date,
+                    snapshot_period,
+                    "personal",
+                    user_id,
+                    _fetch_personal_snapshot_rows(cur, user_id, limit),
+                ):
+                    inserted["personal"] += 1
+
+    return inserted
+
+
+def cleanup_accumulating_tables(
+    snapshot_retention_days: int = 371,
+    birthday_message_retention_days: int = 14,
+    daily_completion_retention_days: int = 30,
+) -> dict[str, int]:
+    """Delete old log/snapshot rows from append-only tables."""
+    snapshot_cutoff = _today_kst() - datetime.timedelta(days=snapshot_retention_days)
+    birthday_cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(
+        days=birthday_message_retention_days
+    )
+    daily_cutoff = _today_kst() - datetime.timedelta(days=daily_completion_retention_days)
+
+    deleted: dict[str, int] = {}
+    with psycopg.connect(**CONN_DICT) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                DELETE FROM bias_leaderboard_snapshots
+                WHERE snapshot_date < %s;
+                """,
+                (snapshot_cutoff,),
+            )
+            deleted["bias_leaderboard_snapshots"] = cur.rowcount
+
+            cur.execute(
+                """
+                DELETE FROM birthday_messages
+                WHERE post_datetime < %s;
+                """,
+                (birthday_cutoff,),
+            )
+            deleted["birthday_messages"] = cur.rowcount
+
+            cur.execute(
+                """
+                DELETE FROM bias_daily_completions
+                WHERE completion_date < %s;
+                """,
+                (daily_cutoff,),
+            )
+            deleted["bias_daily_completions"] = cur.rowcount
+
+    return deleted
