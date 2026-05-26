@@ -17,6 +17,9 @@ from src.db.stats import add_stat_count
 # card with their images laid out side-by-side. Any valid, non-empty URL works —
 # it just has to match across all the embeds we want grouped.
 _EMBED_GROUP_URL = "https://github.com/vaporeon51/tsuki-bot"
+LEADERBOARD_PAGE_SIZE = 15
+LEADERBOARD_MAX_PAGES = 3
+LEADERBOARD_MAX_ENTRIES = LEADERBOARD_PAGE_SIZE * LEADERBOARD_MAX_PAGES
 
 
 @dataclass
@@ -178,12 +181,21 @@ def build_daily_summary_embed(
     return embed
 
 
-def build_leaderboard_embeds(title: str, leaderboard: Leaderboard) -> list[discord.Embed]:
-    """Header embed with the ranked list + #1 image, plus gallery embeds for #2 and #3."""
+def build_leaderboard_embeds(
+    title: str,
+    leaderboard: Leaderboard,
+    page: int = 0,
+    page_size: int = LEADERBOARD_PAGE_SIZE,
+) -> list[discord.Embed]:
+    """Header embed with the ranked list + first image, plus gallery embeds for #2 and #3."""
     medals = {1: "🥇", 2: "🥈", 3: "🥉"}
+    entries = leaderboard.entries[:LEADERBOARD_MAX_ENTRIES]
+    total_pages = max(1, min(LEADERBOARD_MAX_PAGES, (len(entries) + page_size - 1) // page_size))
+    page = max(0, min(page, total_pages - 1))
+    page_entries = entries[page * page_size : (page + 1) * page_size]
 
     lines = []
-    for rank, entry in enumerate(leaderboard.entries, 1):
+    for rank, entry in enumerate(page_entries, page * page_size + 1):
         prefix = medals.get(rank, f"**#{rank}**")
         lines.append(f"{prefix}  **{entry.member_name}** · {entry.group_name} — **{entry.elo}**")
 
@@ -193,18 +205,76 @@ def build_leaderboard_embeds(title: str, leaderboard: Leaderboard) -> list[disco
         color=discord.Color.gold(),
         url=_EMBED_GROUP_URL,
     )
-    header.set_footer(text=f"Based on {leaderboard.vote_count:,} votes.")
-    if leaderboard.entries and leaderboard.entries[0].image_url:
-        header.set_image(url=leaderboard.entries[0].image_url)
+    footer = f"Based on {leaderboard.vote_count:,} votes."
+    if total_pages > 1:
+        footer = f"Page {page + 1}/{total_pages} · {footer}"
+    header.set_footer(text=footer)
+    if page_entries and page_entries[0].image_url:
+        header.set_image(url=page_entries[0].image_url)
 
     embeds = [header]
     for rank in (2, 3):
-        if len(leaderboard.entries) >= rank and leaderboard.entries[rank - 1].image_url:
+        if len(page_entries) >= rank and page_entries[rank - 1].image_url:
             podium = discord.Embed(url=_EMBED_GROUP_URL)
-            podium.set_image(url=leaderboard.entries[rank - 1].image_url)
+            podium.set_image(url=page_entries[rank - 1].image_url)
             embeds.append(podium)
 
     return embeds
+
+
+class LeaderboardView(discord.ui.View):
+    def __init__(self, title: str, leaderboard: Leaderboard):
+        super().__init__(timeout=180.0)
+        self.title = title
+        self.leaderboard = leaderboard
+        self.page = 0
+        entries = leaderboard.entries[:LEADERBOARD_MAX_ENTRIES]
+        self.total_pages = max(
+            1,
+            min(
+                LEADERBOARD_MAX_PAGES,
+                (len(entries) + LEADERBOARD_PAGE_SIZE - 1) // LEADERBOARD_PAGE_SIZE,
+            ),
+        )
+        self.message: discord.Message | None = None
+        if self.total_pages < 3:
+            self.remove_item(self.page_three)
+        self._sync_buttons()
+
+    @property
+    def embeds(self) -> list[discord.Embed]:
+        return build_leaderboard_embeds(self.title, self.leaderboard, self.page)
+
+    def _sync_buttons(self) -> None:
+        self.page_one.disabled = self.page == 0
+        self.page_two.disabled = self.page == 1
+        self.page_three.disabled = self.page == 2
+
+    async def on_timeout(self) -> None:
+        for item in self.children:
+            item.disabled = True
+        if self.message:
+            try:
+                await self.message.edit(view=self)
+            except Exception:
+                pass
+
+    async def _set_page(self, interaction: discord.Interaction, page: int) -> None:
+        self.page = min(self.total_pages - 1, max(0, page))
+        self._sync_buttons()
+        await interaction.response.edit_message(embeds=self.embeds, view=self)
+
+    @discord.ui.button(label="1", style=discord.ButtonStyle.secondary)
+    async def page_one(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._set_page(interaction, 0)
+
+    @discord.ui.button(label="2", style=discord.ButtonStyle.secondary)
+    async def page_two(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._set_page(interaction, 1)
+
+    @discord.ui.button(label="3", style=discord.ButtonStyle.secondary)
+    async def page_three(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._set_page(interaction, 2)
 
 
 def build_group_leaderboard_embeds(
