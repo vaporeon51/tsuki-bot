@@ -45,12 +45,14 @@ class LeaderboardEntry:
     group_name: str
     elo: int
     image_url: str
+    previous_rank: int | None = None
 
 
 @dataclass(frozen=True)
 class Leaderboard:
     entries: list[LeaderboardEntry]
     vote_count: int
+    movement_baseline_date: datetime.date | None = None
 
 
 @dataclass(frozen=True)
@@ -304,6 +306,7 @@ def record_vote(
 
 
 def _build_leaderboard(rows, vote_count) -> Leaderboard:
+    movement_baseline_date = next((row[6] for row in rows if len(row) > 6), None)
     return Leaderboard(
         entries=[
             LeaderboardEntry(
@@ -312,10 +315,12 @@ def _build_leaderboard(rows, vote_count) -> Leaderboard:
                 group_name=row[2],
                 elo=row[3],
                 image_url=row[4],
+                previous_rank=row[5] if len(row) > 5 else None,
             )
             for row in rows
         ],
         vote_count=int(vote_count or 0),
+        movement_baseline_date=movement_baseline_date,
     )
 
 
@@ -351,13 +356,37 @@ def get_global_leaderboard(limit: int = 15) -> Leaderboard:
 
             cur.execute(
                 f"""
-                SELECT r.role_id, r.member_name, r.group_name, r.global_elo, r.image_url
+                WITH previous_snapshot AS (
+                    SELECT MAX(snapshot_date) AS snapshot_date
+                    FROM bias_leaderboard_snapshots
+                    WHERE scope_type = 'global'
+                      AND scope_id = 0
+                      AND snapshot_period = 'weekly'
+                      AND snapshot_date < %s
+                ),
+                previous_ranks AS (
+                    SELECT s.role_id, s.rank, s.snapshot_date
+                    FROM bias_leaderboard_snapshots s
+                    JOIN previous_snapshot p ON s.snapshot_date = p.snapshot_date
+                    WHERE s.scope_type = 'global'
+                      AND s.scope_id = 0
+                      AND s.snapshot_period = 'weekly'
+                )
+                SELECT r.role_id,
+                       r.member_name,
+                       r.group_name,
+                       r.global_elo,
+                       r.image_url,
+                       p.rank AS previous_rank,
+                       ps.snapshot_date AS movement_baseline_date
                 FROM role_info r
+                CROSS JOIN previous_snapshot ps
+                LEFT JOIN previous_ranks p ON r.role_id = p.role_id
                 WHERE {_ACTIVE_IDOL_PREDICATE}
                 ORDER BY r.global_elo DESC, r.member_name, r.role_id
                 LIMIT %s;
                 """,
-                (limit,),
+                (_week_start_kst(), limit),
             )
             return _build_leaderboard(cur.fetchall(), vote_count)
 
@@ -424,14 +453,38 @@ def get_guild_leaderboard(guild_id: int, limit: int = 15) -> Leaderboard:
 
             cur.execute(
                 f"""
-                SELECT r.role_id, r.member_name, r.group_name, g.guild_elo, r.image_url
+                WITH previous_snapshot AS (
+                    SELECT MAX(snapshot_date) AS snapshot_date
+                    FROM bias_leaderboard_snapshots
+                    WHERE scope_type = 'guild'
+                      AND scope_id = %s
+                      AND snapshot_period = 'weekly'
+                      AND snapshot_date < %s
+                ),
+                previous_ranks AS (
+                    SELECT s.role_id, s.rank, s.snapshot_date
+                    FROM bias_leaderboard_snapshots s
+                    JOIN previous_snapshot p ON s.snapshot_date = p.snapshot_date
+                    WHERE s.scope_type = 'guild'
+                      AND s.scope_id = %s
+                      AND s.snapshot_period = 'weekly'
+                )
+                SELECT r.role_id,
+                       r.member_name,
+                       r.group_name,
+                       g.guild_elo,
+                       r.image_url,
+                       p.rank AS previous_rank,
+                       ps.snapshot_date AS movement_baseline_date
                 FROM guild_elo g
                 JOIN role_info r ON g.role_id = r.role_id
+                CROSS JOIN previous_snapshot ps
+                LEFT JOIN previous_ranks p ON r.role_id = p.role_id
                 WHERE g.guild_id = %s AND {_ACTIVE_IDOL_PREDICATE}
                 ORDER BY g.guild_elo DESC, r.member_name, r.role_id
                 LIMIT %s;
                 """,
-                (guild_id, limit),
+                (guild_id, _week_start_kst(), guild_id, guild_id, limit),
             )
             return _build_leaderboard(cur.fetchall(), vote_count)
 
@@ -502,14 +555,38 @@ def get_personal_leaderboard(user_id: int, limit: int = 15) -> Leaderboard:
 
             cur.execute(
                 f"""
-                SELECT r.role_id, r.member_name, r.group_name, u.personal_elo, r.image_url
+                WITH previous_snapshot AS (
+                    SELECT MAX(snapshot_date) AS snapshot_date
+                    FROM bias_leaderboard_snapshots
+                    WHERE scope_type = 'personal'
+                      AND scope_id = %s
+                      AND snapshot_period = 'weekly'
+                      AND snapshot_date < %s
+                ),
+                previous_ranks AS (
+                    SELECT s.role_id, s.rank, s.snapshot_date
+                    FROM bias_leaderboard_snapshots s
+                    JOIN previous_snapshot p ON s.snapshot_date = p.snapshot_date
+                    WHERE s.scope_type = 'personal'
+                      AND s.scope_id = %s
+                      AND s.snapshot_period = 'weekly'
+                )
+                SELECT r.role_id,
+                       r.member_name,
+                       r.group_name,
+                       u.personal_elo,
+                       r.image_url,
+                       p.rank AS previous_rank,
+                       ps.snapshot_date AS movement_baseline_date
                 FROM user_elo u
                 JOIN role_info r ON u.role_id = r.role_id
+                CROSS JOIN previous_snapshot ps
+                LEFT JOIN previous_ranks p ON r.role_id = p.role_id
                 WHERE u.user_id = %s AND {_ACTIVE_IDOL_PREDICATE}
                 ORDER BY u.personal_elo DESC, r.member_name, r.role_id
                 LIMIT %s;
                 """,
-                (user_id, limit),
+                (user_id, _week_start_kst(), user_id, user_id, limit),
             )
             return _build_leaderboard(cur.fetchall(), vote_count)
 

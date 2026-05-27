@@ -197,7 +197,11 @@ def build_leaderboard_embeds(
     lines = []
     for rank, entry in enumerate(page_entries, page * page_size + 1):
         prefix = medals.get(rank, f"**#{rank}**")
-        lines.append(f"{prefix}  **{entry.member_name}** · {entry.group_name} — **{entry.elo}**")
+        movement = _format_rank_movement(rank, entry.previous_rank, leaderboard)
+        score_parts = [part for part in (movement, str(entry.elo)) if part]
+        lines.append(
+            f"{prefix}  **{entry.member_name}** · {entry.group_name} · {' · '.join(score_parts)}"
+        )
 
     header = discord.Embed(
         title=f"🏆 {title}",
@@ -206,6 +210,8 @@ def build_leaderboard_embeds(
         url=_EMBED_GROUP_URL,
     )
     footer = f"Based on {leaderboard.vote_count:,} votes."
+    if leaderboard.movement_baseline_date is not None:
+        footer = f"Movement since {leaderboard.movement_baseline_date.isoformat()} · {footer}"
     if total_pages > 1:
         footer = f"Page {page + 1}/{total_pages} · {footer}"
     header.set_footer(text=footer)
@@ -220,6 +226,22 @@ def build_leaderboard_embeds(
             embeds.append(podium)
 
     return embeds
+
+
+def _format_rank_movement(
+    current_rank: int, previous_rank: int | None, leaderboard: Leaderboard
+) -> str:
+    if leaderboard.movement_baseline_date is None:
+        return ""
+    if previous_rank is None:
+        return "`NEW`"
+
+    rank_delta = previous_rank - current_rank
+    if rank_delta > 0:
+        return f"`▲{rank_delta}`"
+    if rank_delta < 0:
+        return f"`▼{abs(rank_delta)}`"
+    return "`▬`"
 
 
 class LeaderboardView(discord.ui.View):
