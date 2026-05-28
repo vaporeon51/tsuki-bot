@@ -208,11 +208,9 @@ def build_leaderboard_embeds(
         color=discord.Color.gold(),
         url=_EMBED_GROUP_URL,
     )
-    footer = f"Based on {leaderboard.vote_count:,} votes."
+    footer = f"Based on {leaderboard.vote_count:,} votes"
     if leaderboard.movement_baseline_date is not None:
-        footer = f"Movement since {leaderboard.movement_baseline_date.isoformat()} · {footer}"
-    if total_pages > 1:
-        footer = f"Page {page + 1}/{total_pages} · {footer}"
+        footer = f"{footer} · Movement since {leaderboard.movement_baseline_date.isoformat()}"
     header.set_footer(text=footer)
     if page_entries and page_entries[0].image_url:
         header.set_image(url=page_entries[0].image_url)
@@ -240,7 +238,7 @@ def _format_rank_movement(
         return f"`▲{rank_delta}`"
     if rank_delta < 0:
         return f"`▼{abs(rank_delta)}`"
-    return "`▬`"
+    return ""
 
 
 class LeaderboardView(discord.ui.View):
