@@ -362,7 +362,6 @@ def get_global_leaderboard(limit: int = 15) -> Leaderboard:
                     WHERE scope_type = 'global'
                       AND scope_id = 0
                       AND snapshot_period = 'weekly'
-                      AND snapshot_date < %s
                 ),
                 previous_ranks AS (
                     SELECT s.role_id, s.rank, s.snapshot_date
@@ -386,7 +385,7 @@ def get_global_leaderboard(limit: int = 15) -> Leaderboard:
                 ORDER BY r.global_elo DESC, r.member_name, r.role_id
                 LIMIT %s;
                 """,
-                (_week_start_kst(), limit),
+                (limit,),
             )
             return _build_leaderboard(cur.fetchall(), vote_count)
 
@@ -459,7 +458,6 @@ def get_guild_leaderboard(guild_id: int, limit: int = 15) -> Leaderboard:
                     WHERE scope_type = 'guild'
                       AND scope_id = %s
                       AND snapshot_period = 'weekly'
-                      AND snapshot_date < %s
                 ),
                 previous_ranks AS (
                     SELECT s.role_id, s.rank, s.snapshot_date
@@ -484,7 +482,7 @@ def get_guild_leaderboard(guild_id: int, limit: int = 15) -> Leaderboard:
                 ORDER BY g.guild_elo DESC, r.member_name, r.role_id
                 LIMIT %s;
                 """,
-                (guild_id, _week_start_kst(), guild_id, guild_id, limit),
+                (guild_id, guild_id, guild_id, limit),
             )
             return _build_leaderboard(cur.fetchall(), vote_count)
 
@@ -561,7 +559,6 @@ def get_personal_leaderboard(user_id: int, limit: int = 15) -> Leaderboard:
                     WHERE scope_type = 'personal'
                       AND scope_id = %s
                       AND snapshot_period = 'weekly'
-                      AND snapshot_date < %s
                 ),
                 previous_ranks AS (
                     SELECT s.role_id, s.rank, s.snapshot_date
@@ -586,7 +583,7 @@ def get_personal_leaderboard(user_id: int, limit: int = 15) -> Leaderboard:
                 ORDER BY u.personal_elo DESC, r.member_name, r.role_id
                 LIMIT %s;
                 """,
-                (user_id, _week_start_kst(), user_id, user_id, limit),
+                (user_id, user_id, user_id, limit),
             )
             return _build_leaderboard(cur.fetchall(), vote_count)
 
