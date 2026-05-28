@@ -238,7 +238,7 @@ def _format_rank_movement(
         return f"`▲{rank_delta}`"
     if rank_delta < 0:
         return f"`▼{abs(rank_delta)}`"
-    return ""
+    return "`–`"
 
 
 class LeaderboardView(discord.ui.View):
