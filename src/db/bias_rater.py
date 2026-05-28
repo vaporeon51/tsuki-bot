@@ -362,6 +362,7 @@ def get_global_leaderboard(limit: int = 15) -> Leaderboard:
                     WHERE scope_type = 'global'
                       AND scope_id = 0
                       AND snapshot_period = 'weekly'
+                      AND captured_at <= NOW() - INTERVAL '24 hours'
                 ),
                 previous_ranks AS (
                     SELECT s.role_id, s.rank, s.snapshot_date
@@ -458,6 +459,7 @@ def get_guild_leaderboard(guild_id: int, limit: int = 15) -> Leaderboard:
                     WHERE scope_type = 'guild'
                       AND scope_id = %s
                       AND snapshot_period = 'weekly'
+                      AND captured_at <= NOW() - INTERVAL '24 hours'
                 ),
                 previous_ranks AS (
                     SELECT s.role_id, s.rank, s.snapshot_date
@@ -559,6 +561,7 @@ def get_personal_leaderboard(user_id: int, limit: int = 15) -> Leaderboard:
                     WHERE scope_type = 'personal'
                       AND scope_id = %s
                       AND snapshot_period = 'weekly'
+                      AND captured_at <= NOW() - INTERVAL '24 hours'
                 ),
                 previous_ranks AS (
                     SELECT s.role_id, s.rank, s.snapshot_date
