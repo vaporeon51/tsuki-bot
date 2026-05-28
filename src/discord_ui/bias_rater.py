@@ -198,10 +198,9 @@ def build_leaderboard_embeds(
     for rank, entry in enumerate(page_entries, page * page_size + 1):
         prefix = medals.get(rank, f"**#{rank}**")
         movement = _format_rank_movement(rank, entry.previous_rank, leaderboard)
-        score_parts = [part for part in (movement, str(entry.elo)) if part]
-        lines.append(
-            f"{prefix}  **{entry.member_name}** · {entry.group_name} · {' · '.join(score_parts)}"
-        )
+        score_parts = [part for part in (movement,) if part]
+        score_suffix = f" · {' · '.join(score_parts)}" if score_parts else ""
+        lines.append(f"{prefix}  **{entry.member_name}** · {entry.group_name}{score_suffix}")
 
     header = discord.Embed(
         title=f"🏆 {title}",
@@ -234,14 +233,14 @@ def _format_rank_movement(
     if leaderboard.movement_baseline_date is None:
         return ""
     if previous_rank is None:
-        return "`NEW`"
+        return "NEW"
 
     rank_delta = previous_rank - current_rank
     if rank_delta > 0:
-        return f"`▲{rank_delta}`"
+        return f"▲{rank_delta}"
     if rank_delta < 0:
-        return f"`▼{abs(rank_delta)}`"
-    return "`▬`"
+        return f"▼{abs(rank_delta)}"
+    return "▬"
 
 
 class LeaderboardView(discord.ui.View):
