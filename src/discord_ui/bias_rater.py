@@ -198,7 +198,7 @@ def build_leaderboard_embeds(
     for rank, entry in enumerate(page_entries, page * page_size + 1):
         prefix = medals.get(rank, f"**#{rank}**")
         movement = _format_rank_movement(rank, entry.previous_rank, leaderboard)
-        score_parts = [part for part in (movement,) if part]
+        score_parts = [part for part in (movement, f"[{entry.elo}]") if part]
         score_suffix = f"  {' '.join(score_parts)}" if score_parts else ""
         lines.append(f"{prefix}  **{entry.member_name}** · {entry.group_name}{score_suffix}")
 
