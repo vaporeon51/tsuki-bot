@@ -716,7 +716,10 @@ class BiasRater(discord.app_commands.Group):
         await asyncio.to_thread(add_stat_count, "bias_daily")
 
     @discord.app_commands.command(name="leaderboard", description="Show ELO leaderboard")
-    @discord.app_commands.describe(scope="global, server, or personal")
+    @discord.app_commands.describe(
+        scope="global, server, or personal",
+        user="User whose personal leaderboard to show; only used with personal scope",
+    )
     @discord.app_commands.choices(
         scope=[
             discord.app_commands.Choice(name="Global", value="global"),
@@ -724,7 +727,12 @@ class BiasRater(discord.app_commands.Group):
             discord.app_commands.Choice(name="Personal", value="personal"),
         ]
     )
-    async def leaderboard(self, interaction: discord.Interaction, scope: str = "personal"):
+    async def leaderboard(
+        self,
+        interaction: discord.Interaction,
+        scope: str = "personal",
+        user: discord.User | None = None,
+    ):
         # Ack first; the DB query below can exceed Discord's 3s deadline on a cold connection.
         await interaction.response.defer()
         if scope == "global":
@@ -736,10 +744,11 @@ class BiasRater(discord.app_commands.Group):
             )
             title = f"Server Leaderboard for {interaction.guild.name}"
         else:
+            target_user = user or interaction.user
             tops = await asyncio.to_thread(
-                get_personal_leaderboard, interaction.user.id, LEADERBOARD_MAX_ENTRIES
+                get_personal_leaderboard, target_user.id, LEADERBOARD_MAX_ENTRIES
             )
-            title = f"Personal Leaderboard for {interaction.user.display_name}"
+            title = f"Personal Leaderboard for {target_user.display_name}"
 
         if not tops.entries:
             await interaction.edit_original_response(content="No votes recorded yet!")
