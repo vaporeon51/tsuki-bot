@@ -36,6 +36,9 @@ _ACTIVE_IDOL_PREDICATE = (
 # more top-heavy picks, lower for more uniform.
 _FIRST_PICK_ALPHA = 0.5
 LEADERBOARD_SNAPSHOT_LIMIT = 45
+GLOBAL_ELO_K = 8
+GUILD_ELO_K = 24
+PERSONAL_ELO_K = 32
 
 
 @dataclass(frozen=True)
@@ -209,9 +212,9 @@ def record_vote(
             pl_elo = personal_elos[loser_id]
 
             # 3. Calculate deltas
-            gw_delta, gl_delta = calculate_elo_delta(gw_elo, gl_elo)
-            sw_delta, sl_delta = calculate_elo_delta(sw_elo, sl_elo)
-            pw_delta, pl_delta = calculate_elo_delta(pw_elo, pl_elo)
+            gw_delta, gl_delta = calculate_elo_delta(gw_elo, gl_elo, GLOBAL_ELO_K)
+            sw_delta, sl_delta = calculate_elo_delta(sw_elo, sl_elo, GUILD_ELO_K)
+            pw_delta, pl_delta = calculate_elo_delta(pw_elo, pl_elo, PERSONAL_ELO_K)
 
             # 4. Update tables
             cur.execute(
