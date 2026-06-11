@@ -92,6 +92,7 @@ def get_content(query: str) -> str:
 
     Args:
         query: An idol's name (e.g. "minji"), a group name (e.g. "newjeans"),
+            or a combination of both if name is ambiguous (e.g. "ive yujin"),
             or "random" for a random pick.
     """
     # Dispatched manually in generate_chat_response so we can inject the
