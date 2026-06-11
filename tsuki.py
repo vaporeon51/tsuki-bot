@@ -1,7 +1,6 @@
 import asyncio
 import os
 import random
-import time
 from pathlib import Path
 
 import discord
@@ -868,7 +867,6 @@ async def handle_tsuki_chat(message: discord.Message) -> None:
         # after the context closes so "typing..." doesn't linger past the reply.
         async with channel.typing():
             # Recent history (chronological) followed by the triggering message.
-            th = time.perf_counter()
             history: list[discord.Message] = []
             async for msg in channel.history(limit=30, before=message):
                 history.append(msg)
@@ -876,12 +874,9 @@ async def handle_tsuki_chat(message: discord.Message) -> None:
             history.append(message)
 
             min_age = await asyncio.to_thread(get_min_age, message.guild.id) if message.guild else "18 year 1 month"
-            print(f"[timing] history + min_age: {time.perf_counter() - th:.2f}s")
 
             chat_msgs = [_to_chat_msg(msg) for msg in history if msg.content.strip()]
-            tg = time.perf_counter()
             result = await generate_chat_response(chat_msgs, min_age)
-            print(f"[timing] generate_chat_response total: {time.perf_counter() - tg:.2f}s")
 
         await channel.send(
             result.text or "...",

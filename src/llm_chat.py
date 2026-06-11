@@ -1,6 +1,5 @@
 import asyncio
 import re
-import time
 from dataclasses import dataclass, field
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
@@ -54,7 +53,8 @@ especially Minji.
 - keep it SHORT — usually 1-2 sentences. you're texting, not writing essays
 - match the other person's energy and read the room: be sweet, hype, or cheeky as it fits
 - it's a kpop server, so kpop references are welcome, but never force them
-- sprinkle in the custom emojis below, but don't overdo it (one is usually plenty)
+- sprinkle in the custom emojis below, but don't overdo it (one or two is usually plenty), and
+  don't always use the same ones over and over -- switch it up once in a while
 
 # Don't
 - don't be cringe or try-hard, and don't explain your own jokes
@@ -130,6 +130,17 @@ def _normalize_inbound(text: str) -> str:
     return _FOREIGN_EMOJI.sub(r":\1:", text)
 
 
+# Reverse lookup from a custom emoji's bare name (e.g. "hanni_ouuu") to its full
+# Discord code, used to upgrade any ":name:" shorthand the model emits back into a
+# code that actually renders.
+_EMOJI_BY_NAME = {code.split(":")[1]: code for code in HANNI_EMOJIS.values()}
+_SHORTCODE = re.compile(r":([a-zA-Z0-9_]+):")
+
+
+def _restore_emoji_codes(text: str) -> str:
+    return _SHORTCODE.sub(lambda m: _EMOJI_BY_NAME.get(m.group(1), m.group(0)), text)
+
+
 def _message_text(message: BaseMessage) -> str:
     """Coerce a (possibly multi-part) message content into a plain string."""
     content = message.content
@@ -147,13 +158,20 @@ def _message_text(message: BaseMessage) -> str:
 def _build_messages(history: list[ChatMsg]) -> list[BaseMessage]:
     messages: list[BaseMessage] = [SystemMessage(SYSTEM_PROMPT)]
     for msg in history:
-        content = _normalize_inbound(msg.content).strip()
-        if not content:
-            continue
         if msg.is_tsuki:
-            messages.append(AIMessage(content=content))
+            # Keep Hanni's own emoji as full <a:name:id> codes so she sees (and
+            # imitates) the format she should produce — never the ":name:" form.
+            content = msg.content.strip()
+            if content:
+                messages.append(AIMessage(content=content))
         else:
-            messages.append(HumanMessage(content=f"{msg.author_name} (<@{msg.author_id}>): {content}"))
+            # Strip other users' custom emoji to ":name:" so she doesn't reuse
+            # foreign emoji ids.
+            content = _normalize_inbound(msg.content).strip()
+            if content:
+                messages.append(
+                    HumanMessage(content=f"{msg.author_name} (<@{msg.author_id}>): {content}")
+                )
     return messages
 
 
@@ -181,23 +199,19 @@ async def generate_chat_response(history: list[ChatMsg], min_age: str) -> ChatRe
     """
     messages = _build_messages(history)
 
-    t0 = time.perf_counter()
     ai = await _LLM.ainvoke(messages)
-    print(f"[timing] llm call 1: {time.perf_counter() - t0:.2f}s")
     assert isinstance(ai, AIMessage)
 
     content_calls = [c for c in ai.tool_calls if c["name"] == "get_content"]
     if not content_calls:
-        return ChatResult(text=_message_text(ai).strip())
+        return ChatResult(text=_restore_emoji_codes(_message_text(ai).strip()))
 
     # Resolve each content request against the DB.
     messages.append(ai)
     attachments: list[str] = []
     any_failed = False
     for call in content_calls:
-        td = time.perf_counter()
         url = await _resolve_content(call["args"].get("query", "random"), min_age)
-        print(f"[timing] get_content db: {time.perf_counter() - td:.2f}s")
         if url:
             if url not in attachments:
                 attachments.append(url)
@@ -210,12 +224,15 @@ async def generate_chat_response(history: list[ChatMsg], min_age: str) -> ChatRe
     # Happy path: the search found something and her reply is already in call 1,
     # so we're done in a single call. Only re-invoke when a search failed.
     if not any_failed:
-        text = _message_text(ai).strip() or f"here you go !! {HANNI_EMOJIS['giggling']}"
+        text = (
+            _restore_emoji_codes(_message_text(ai).strip())
+            or f"here you go !! {HANNI_EMOJIS['giggling']}"
+        )
         return ChatResult(text=text, attachments=attachments)
 
-    t1 = time.perf_counter()
     follow_up = await _LLM.ainvoke(messages)
-    print(f"[timing] llm call 2 (search failed): {time.perf_counter() - t1:.2f}s")
     assert isinstance(follow_up, AIMessage)
-    text = _message_text(follow_up).strip() or _message_text(ai).strip()
+    text = _restore_emoji_codes(_message_text(follow_up).strip()) or _restore_emoji_codes(
+        _message_text(ai).strip()
+    )
     return ChatResult(text=text, attachments=attachments)
