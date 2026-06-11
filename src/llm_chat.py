@@ -9,9 +9,12 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 
 from src.db.utils import get_closest_roles, get_random_link_for_each_role, get_random_roles
 
-MODEL = "gemini-3.1-flash-lite"
-# Falls back to Gemma 4 (also supports native function calling) on rate limits.
-FALLBACK_MODEL = "gemma-4-31b-it"
+# Models tried in order; we advance to the next one only on a rate limit.
+# (All must support native function calling.)
+MODELS = [
+    "gemini-3.1-flash-lite",  # primary
+    "gemma-4-31b-it",  # fallback
+]
 MAX_TOKENS = 512
 
 # Custom server emojis Hanni can use, keyed by a short description. Discord renders
@@ -124,9 +127,8 @@ def _build_llm(model: str) -> Runnable:
     return llm.bind_tools([get_content])  # type: ignore[list-item]
 
 
-# Built once at import (not per message) and reused across all chat responses.
-_PRIMARY = _build_llm(MODEL)
-_FALLBACK = _build_llm(FALLBACK_MODEL)
+# Each model's tool-bound client, built once and reused across all responses.
+_LLMS: dict[str, Runnable] = {model: _build_llm(model) for model in MODELS}
 
 
 def _is_rate_limit(exc: Exception) -> bool:
@@ -149,16 +151,35 @@ def _is_rate_limit(exc: Exception) -> bool:
     )
 
 
-async def _ainvoke(messages: list[BaseMessage]) -> AIMessage:
-    """Invoke the primary model, falling back to Gemma 4 only on rate limits."""
+async def _invoke_model(model: str, messages: list[BaseMessage]) -> AIMessage:
+    """Call a single model with uniform logging. Raises on failure."""
+    print(f"[chat] calling {model!r} ({len(messages)} messages)")
     try:
-        result = await _PRIMARY.ainvoke(messages)
+        result = await _LLMS[model].ainvoke(messages)
     except Exception as exc:
-        if not _is_rate_limit(exc):
-            raise
-        result = await _FALLBACK.ainvoke(messages)
+        print(
+            f"[chat] {model} raised {type(exc).__name__}: {exc!r} "
+            f"| code={getattr(exc, 'code', None)} status_code={getattr(exc, 'status_code', None)} "
+            f"| is_rate_limit={_is_rate_limit(exc)}"
+        )
+        raise
     assert isinstance(result, AIMessage)
     return result
+
+
+async def _ainvoke(messages: list[BaseMessage]) -> AIMessage:
+    """Try each model in MODELS order, advancing to the next only on a rate limit."""
+    last_exc: Exception | None = None
+    for model in MODELS:
+        try:
+            return await _invoke_model(model, messages)
+        except Exception as exc:
+            last_exc = exc
+            if not _is_rate_limit(exc):
+                raise
+            print(f"[chat] {model} rate limited -> trying next model")
+    assert last_exc is not None
+    raise last_exc
 
 
 @dataclass
