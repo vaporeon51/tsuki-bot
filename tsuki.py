@@ -906,10 +906,10 @@ async def on_message(message: discord.Message):
         await handle_owner_whisper(message)
         return
 
-    # Respond in-character only when Tsuki is explicitly @mentioned.
-    # (Replies to Tsuki are intentionally not handled yet — to add them later,
-    # also check message.reference against the bot's own messages here.)
-    if bot.user in message.mentions:
+    # Respond only to an explicit @mention in the message text. raw_mentions is
+    # parsed from the content, so it excludes the auto-ping Discord adds when
+    # someone merely replies to one of her messages.
+    if bot.user is not None and bot.user.id in message.raw_mentions:
         await handle_tsuki_chat(message)
 
 

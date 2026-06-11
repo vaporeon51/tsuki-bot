@@ -2,13 +2,17 @@ import asyncio
 import re
 from dataclasses import dataclass, field
 
+from google.api_core.exceptions import ResourceExhausted
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
+from langchain_core.runnables import Runnable
 from langchain_core.tools import tool
 from langchain_google_genai import ChatGoogleGenerativeAI
 
 from src.db.utils import get_closest_roles, get_random_link_for_each_role, get_random_roles
 
 MODEL = "gemini-3.1-flash-lite"
+# Falls back to Gemma 4 (also supports native function calling) on rate limits.
+FALLBACK_MODEL = "gemma-4-31b-it"
 MAX_TOKENS = 512
 
 # Custom server emojis Hanni can use, keyed by a short description. Discord renders
@@ -96,15 +100,24 @@ def get_content(query: str) -> str:
     raise NotImplementedError
 
 
-# Built once at import (not per message) and reused across all chat responses.
-_BASE_LLM = ChatGoogleGenerativeAI(
-    model=MODEL,
-    temperature=0.4,
-    max_tokens=MAX_TOKENS,
-    timeout=20,
-    max_retries=2,
+def _build_llm(model: str) -> Runnable:
+    llm = ChatGoogleGenerativeAI(
+        model=model,
+        temperature=0.4,
+        max_tokens=MAX_TOKENS,
+        timeout=20,
+        max_retries=2,
+    )
+    return llm.bind_tools([get_content])  # type: ignore[list-item]
+
+
+# Built once at import (not per message) and reused across all chat responses. If the
+# primary model hits a rate limit (HTTP 429 / ResourceExhausted), LangChain
+# transparently retries the same request against the Gemma 4 fallback.
+_LLM = _build_llm(MODEL).with_fallbacks(
+    [_build_llm(FALLBACK_MODEL)],
+    exceptions_to_handle=(ResourceExhausted,),
 )
-_LLM = _BASE_LLM.bind_tools([get_content])  # type: ignore[list-item]
 
 
 @dataclass
