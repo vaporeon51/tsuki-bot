@@ -9,7 +9,7 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 
 from src.db.utils import get_closest_roles, get_random_link_for_each_role, get_random_roles
 
-MODEL = "gemma-4-31b-it"  # gemini-3.1-flash-lite
+MODEL = "gemini-3.1-flash-lite"
 # Falls back to Gemma 4 (also supports native function calling) on rate limits.
 FALLBACK_MODEL = "gemma-4-31b-it"
 MAX_TOKENS = 512
