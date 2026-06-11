@@ -16,35 +16,8 @@ IS_DEV = os.environ.get("IS_DEV", "false") == "true"
 from src.birthday_feed import update_birthday_feeds
 
 # Local imports after dotenv to ensure environment variables are available
-from src.config.constants import (
-    REDDIT_FEED_WINDOW,
-    REPORT_EMOTE,
-    TSUKI_HARAM_HUG,
-    TSUKI_NOM,
-    UPVOTE_EMOTE,
-)
+from src.config.constants import REDDIT_FEED_WINDOW, REPORT_EMOTE, TSUKI_HARAM_HUG, TSUKI_NOM, UPVOTE_EMOTE
 from src.content_update import run_content_links_update
-from src.db.birthday_feed import set_birthday_feed, unset_birthday_feeds
-from src.db.guild_settings import get_min_age, set_min_age
-from src.db.reddit_feeds import get_subscriptions, set_reddit_feed, unset_feeds
-from src.db.stats import add_stat_count
-from src.db.utils import (
-    get_closest_roles,
-    get_latest_links_for_roles,
-    get_random_link_for_each_role,
-    get_random_roles,
-)
-from src.llm_chat import get_llm_chat_response
-from src.reaction.gather import gather_dead_link, gather_reactions
-from src.reddit_feeds import update_reddit_feeds
-from src.discord_ui.bias_rater import (
-    LEADERBOARD_MAX_ENTRIES,
-    LEADERBOARD_PAGE_SIZE,
-    LeaderboardView,
-    VoteView,
-    build_group_leaderboard_embeds,
-    build_leaderboard_embeds,
-)
 from src.db.bias_rater import (
     cleanup_accumulating_tables,
     create_weekly_leaderboard_snapshots,
@@ -56,6 +29,22 @@ from src.db.bias_rater import (
     get_personal_leaderboard,
     has_completed_daily,
 )
+from src.db.birthday_feed import set_birthday_feed, unset_birthday_feeds
+from src.db.guild_settings import get_min_age, set_min_age
+from src.db.reddit_feeds import get_subscriptions, set_reddit_feed, unset_feeds
+from src.db.stats import add_stat_count
+from src.db.utils import get_closest_roles, get_latest_links_for_roles, get_random_link_for_each_role, get_random_roles
+from src.discord_ui.bias_rater import (
+    LEADERBOARD_MAX_ENTRIES,
+    LEADERBOARD_PAGE_SIZE,
+    LeaderboardView,
+    VoteView,
+    build_group_leaderboard_embeds,
+    build_leaderboard_embeds,
+)
+from src.llm_chat import ChatMsg, generate_chat_response
+from src.reaction.gather import gather_dead_link, gather_reactions
+from src.reddit_feeds import update_reddit_feeds
 
 TOKEN = os.environ.get("TOKEN")
 OWNER_USER_ID = 1298088341241335841
@@ -66,9 +55,7 @@ class TsukiBot(commands.Bot):
     def __init__(self):
         intents = discord.Intents.default()
         intents.message_content = True
-        super().__init__(
-            intents=intents, command_prefix="['/tsuki', '/tk', '!']", help_command=None
-        )
+        super().__init__(intents=intents, command_prefix="['/tsuki', '/tk', '!']", help_command=None)
         self.custom_event_queue = asyncio.Queue()
         self.active_commands: dict[int, dict[str, list[asyncio.Task]]] = {}
 
@@ -85,10 +72,7 @@ class TsukiBot(commands.Bot):
             if event["type"] == "cancel_command":
                 guild_id = event["guild_id"]
                 command_name = event["command_name"]
-                if (
-                    guild_id in self.active_commands
-                    and command_name in self.active_commands[guild_id]
-                ):
+                if guild_id in self.active_commands and command_name in self.active_commands[guild_id]:
                     command_tasks = self.active_commands[guild_id][command_name]
                     for command_task in command_tasks:
                         command_task.cancel()
@@ -178,9 +162,7 @@ async def on_ready():
 
 
 @bot.tree.command(name="feed", description="Get random kpop content using idol or group name.")
-@discord.app_commands.describe(
-    query="Idols and groups you want to include. Use `r` or `random` for random idol."
-)
+@discord.app_commands.describe(query="Idols and groups you want to include. Use `r` or `random` for random idol.")
 async def feed(interaction: discord.Interaction, query: str | None = None):
     if not await asyncio.to_thread(has_completed_daily, interaction.user.id):
         await interaction.response.send_message(
@@ -246,9 +228,7 @@ async def latest(
         )
         return
     if num_images > 20:
-        await interaction.response.send_message(
-            "Cannot send more than 20 links at a time.", ephemeral=True
-        )
+        await interaction.response.send_message("Cannot send more than 20 links at a time.", ephemeral=True)
         return
 
     min_age = await asyncio.to_thread(get_min_age, interaction.guild_id)
@@ -272,9 +252,7 @@ async def latest(
         )
 
     if not role_ids_and_urls:
-        await interaction.response.send_message(
-            "Could not find any content with these inputs.", ephemeral=True
-        )
+        await interaction.response.send_message("Could not find any content with these inputs.", ephemeral=True)
         return
 
     text = f"Fetched latest `{len(role_ids_and_urls)}` images of `{query if query else 'all'}` after skipping first `{skip}` {TSUKI_NOM}"
@@ -343,9 +321,7 @@ async def autofeed(
         await asyncio.to_thread(add_stat_count, "autofeed")
 
 
-async def autofeed_command(
-    interaction: discord.Interaction, query: str | None, interval: int, count: int
-):
+async def autofeed_command(interaction: discord.Interaction, query: str | None, interval: int, count: int):
     await interaction.response.defer(thinking=True)
     min_age = await asyncio.to_thread(get_min_age, interaction.guild_id)
     if query in [None, "r", "random"]:
@@ -366,15 +342,11 @@ async def autofeed_command(
         temp = count // temp + 1
         role_ids = (role_ids * temp)[:count]
 
-    role_ids_and_urls = await asyncio.to_thread(
-        get_random_link_for_each_role, role_ids=role_ids, min_age=min_age
-    )
+    role_ids_and_urls = await asyncio.to_thread(get_random_link_for_each_role, role_ids=role_ids, min_age=min_age)
 
     # One retry attempt incase a role had a full recently sent queue
     if not role_ids_and_urls or len(role_ids_and_urls) != count:
-        role_ids_and_urls = await asyncio.to_thread(
-            get_random_link_for_each_role, role_ids=role_ids, min_age=min_age
-        )
+        role_ids_and_urls = await asyncio.to_thread(get_random_link_for_each_role, role_ids=role_ids, min_age=min_age)
 
     # Proceed only if we got more than half of the count urls
     if not role_ids_and_urls or len(role_ids_and_urls) < count // 2:
@@ -426,9 +398,7 @@ async def perform_autofeed_critical_operations(
     tasks.append(reaction_gathering_task)
 
 
-async def bias_autofeed_command(
-    interaction: discord.Interaction, scope: str, interval: int, count: int
-):
+async def bias_autofeed_command(interaction: discord.Interaction, scope: str, interval: int, count: int):
     await interaction.response.defer(thinking=True)
     min_age = await asyncio.to_thread(get_min_age, interaction.guild_id)
 
@@ -455,15 +425,11 @@ async def bias_autofeed_command(
     # Pick randomly with weights and replacement
     role_ids = random.choices(top_roles, weights=weights, k=count)
 
-    role_ids_and_urls = await asyncio.to_thread(
-        get_random_link_for_each_role, role_ids=role_ids, min_age=min_age
-    )
+    role_ids_and_urls = await asyncio.to_thread(get_random_link_for_each_role, role_ids=role_ids, min_age=min_age)
 
     # One retry attempt incase a role had a full recently sent queue
     if not role_ids_and_urls or len(role_ids_and_urls) != count:
-        role_ids_and_urls = await asyncio.to_thread(
-            get_random_link_for_each_role, role_ids=role_ids, min_age=min_age
-        )
+        role_ids_and_urls = await asyncio.to_thread(get_random_link_for_each_role, role_ids=role_ids, min_age=min_age)
 
     # Proceed only if we got more than half of the count urls
     if not role_ids_and_urls or len(role_ids_and_urls) < count // 2:
@@ -543,23 +509,15 @@ class RedditFeed(discord.app_commands.Group):
             assert interaction.guild_id is not None
             subs = await asyncio.to_thread(get_subscriptions, interaction.guild_id)
             if not subs:
-                await interaction.response.send_message(
-                    "No reddit feeds for this server.", ephemeral=True
-                )
+                await interaction.response.send_message("No reddit feeds for this server.", ephemeral=True)
             else:
-                await interaction.response.send_message(
-                    f"Subscriptions of channel and subreddit: `{str(subs)}`"
-                )
+                await interaction.response.send_message(f"Subscriptions of channel and subreddit: `{str(subs)}`")
         except Exception as e:
             print(e)
-            await interaction.response.send_message(
-                f"Failed to get server subscriptions: {e}", ephemeral=True
-            )
+            await interaction.response.send_message(f"Failed to get server subscriptions: {e}", ephemeral=True)
         await asyncio.to_thread(add_stat_count, "reddit_list_feeds")
 
-    @discord.app_commands.command(
-        name="unset_feeds", description="Unset all reddit feeds for this server."
-    )
+    @discord.app_commands.command(name="unset_feeds", description="Unset all reddit feeds for this server.")
     async def unset_feeds(self, interaction: discord.Interaction):
         try:
             assert interaction.guild_id is not None
@@ -575,9 +533,7 @@ class RedditFeed(discord.app_commands.Group):
 @discord.app_commands.guild_only()
 class BirthdayFeed(discord.app_commands.Group):
     def __init__(self):
-        super().__init__(
-            name="birthday_feed", description="Commands for configuring birthday feed."
-        )
+        super().__init__(name="birthday_feed", description="Commands for configuring birthday feed.")
         return
 
     @discord.app_commands.command(
@@ -589,17 +545,13 @@ class BirthdayFeed(discord.app_commands.Group):
         try:
             assert interaction.guild_id is not None
             await asyncio.to_thread(set_birthday_feed, interaction.guild_id, channel.id)
-            await interaction.response.send_message(
-                f"Channel `{channel.name}` is set to recieve birthday updates."
-            )
+            await interaction.response.send_message(f"Channel `{channel.name}` is set to recieve birthday updates.")
         except Exception as e:
             print(e)
             await interaction.response.send_message(f"Failed to set channel: {e}", ephemeral=True)
         await asyncio.to_thread(add_stat_count, "birthday_set_feed")
 
-    @discord.app_commands.command(
-        name="unset_feeds", description="Unset all birthday feeds for this server."
-    )
+    @discord.app_commands.command(name="unset_feeds", description="Unset all birthday feeds for this server.")
     async def unset_feeds(self, interaction: discord.Interaction):
         try:
             assert interaction.guild_id is not None
@@ -742,15 +694,11 @@ class BiasRater(discord.app_commands.Group):
             tops = await asyncio.to_thread(get_global_leaderboard, LEADERBOARD_MAX_ENTRIES)
             title = "Global Idol Leaderboard"
         elif scope == "server":
-            tops = await asyncio.to_thread(
-                get_guild_leaderboard, interaction.guild_id, LEADERBOARD_MAX_ENTRIES
-            )
+            tops = await asyncio.to_thread(get_guild_leaderboard, interaction.guild_id, LEADERBOARD_MAX_ENTRIES)
             title = f"Server Leaderboard for {interaction.guild.name}"
         else:
             target_user = user or interaction.user
-            tops = await asyncio.to_thread(
-                get_personal_leaderboard, target_user.id, LEADERBOARD_MAX_ENTRIES
-            )
+            tops = await asyncio.to_thread(get_personal_leaderboard, target_user.id, LEADERBOARD_MAX_ENTRIES)
             title = f"Personal Leaderboard for {target_user.display_name}"
 
         if not tops.entries:
@@ -848,27 +796,6 @@ class BiasRater(discord.app_commands.Group):
             await asyncio.to_thread(add_stat_count, "bias_autofeed")
 
 
-async def is_trigger_message(message):
-    # Ignore messages from the bot itself
-    if message.author == bot.user:
-        return False
-
-    # Check if bot is mentioned directly
-    if bot.user in message.mentions:
-        return True
-
-    # Check if message is a reply to the bot
-    if message.reference:
-        try:
-            # Fetch the referenced message
-            referenced_message = await message.channel.fetch_message(message.reference.message_id)
-            if referenced_message.author == bot.user:
-                return True
-        except:
-            pass
-    return False
-
-
 async def handle_owner_whisper(message: discord.Message) -> bool:
     # Usage: DM the bot with `whisper <channel_id> <message>`.
     if message.author.id != OWNER_USER_ID:
@@ -917,55 +844,63 @@ async def handle_owner_whisper(message: discord.Message) -> bool:
     return True
 
 
+def _to_chat_msg(message: discord.Message) -> ChatMsg:
+    # Use raw content (not clean_content) so the model sees real `<@id>`
+    # mentions and `<:emoji:id>` codes instead of flattened display names.
+    return ChatMsg(
+        author_name=message.author.display_name,
+        author_id=message.author.id,
+        is_tsuki=message.author == bot.user,
+        content=message.content,
+    )
+
+
+async def handle_tsuki_chat(message: discord.Message) -> None:
+    channel = message.channel
+    try:
+        async with channel.typing():
+            # Recent history (chronological) followed by the triggering message.
+            history: list[discord.Message] = []
+            async for msg in channel.history(limit=20, before=message):
+                history.append(msg)
+            history.reverse()
+            history.append(message)
+
+            min_age = await asyncio.to_thread(get_min_age, message.guild.id) if message.guild else "18 year 1 month"
+
+            chat_msgs = [_to_chat_msg(msg) for msg in history if msg.content.strip()]
+            result = await generate_chat_response(chat_msgs, min_age)
+
+            await channel.send(
+                result.text or "...",
+                allowed_mentions=discord.AllowedMentions(users=True, roles=False, everyone=False),
+            )
+            for url in result.attachments:
+                link_msg = await channel.send(url)
+                # Any standalone content link gets the broken-link check.
+                await gather_dead_link(link_msg, url)
+
+        await asyncio.to_thread(add_stat_count, "llm_response")
+    except Exception as e:
+        print(f"Tsuki chat error: {e}")
+        await channel.send(f"sorry, i hit an error rn :chaewon_think: ({e})")
+
+
 @bot.event
 async def on_message(message: discord.Message):
     if message.author == bot.user:
         return
-    if not isinstance(message.channel, discord.DMChannel):
+
+    # Owner whisper handling happens over DM only.
+    if isinstance(message.channel, discord.DMChannel):
+        await handle_owner_whisper(message)
         return
-    if await handle_owner_whisper(message):
-        return
 
-
-# # Disabling for now until LLM and prompt and emoji stuff are all sorted out
-# @bot.event
-# async def on_message(message):
-#     if await is_trigger_message(message):
-#         try:
-#             channel = message.channel
-
-#             # Fetch message history (10 messages before the mentioned message)
-#             messages = []
-#             async for msg in channel.history(limit=20, before=message):
-#                 messages.append(msg)
-
-#             # Add the mentioned message to the list and reverse for chronological order
-#             messages.reverse()
-#             messages.append(message)
-
-#             # Format messages with display name and username
-#             formatted_messages = []
-#             for msg in messages:
-#                 if content := msg.clean_content:
-#                     formatted = f"{msg.author.display_name} (@{msg.author.name}): {content}"
-#                     formatted_messages.append(formatted)
-#             all_messages = "\n".join(formatted_messages)
-#             responses = get_llm_chat_response(all_messages)
-
-#             # Send each response separately
-#             for i, response in enumerate(responses):
-#                 message = await channel.send(response)
-#                 # Any response after the first one must be a content link so check if its broken
-#                 if i > 0:
-#                     await gather_dead_link(message, response)
-
-#             add_stat_count("llm_response")
-
-#         except Exception as e:
-#             await channel.send(f"Sorry, I encountered an error: {str(e)}")
-
-#     # Process other commands
-#     await bot.process_commands(message)
+    # Respond in-character only when Tsuki is explicitly @mentioned.
+    # (Replies to Tsuki are intentionally not handled yet — to add them later,
+    # also check message.reference against the bot's own messages here.)
+    if bot.user in message.mentions:
+        await handle_tsuki_chat(message)
 
 
 bot.run(TOKEN)
