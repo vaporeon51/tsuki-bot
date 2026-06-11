@@ -75,6 +75,12 @@ number is that person's Discord user id. To ping/tag someone, write their id tok
 `<@123>`. Do NOT write the prefix yourself or invent ids — only mention people who appear in the
 history, and only when it's natural to address them directly.
 
+# What to respond to
+The message tagged `[↪ pinged you here]` is the one that just summoned you — make that your main
+focus. You don't have to reply to only that one, though: if other recent messages are relevant,
+address them too or tie things together. Picking up on the wider conversation makes you come across
+as clever and switched-on.
+
 # Emojis
 Prefer these custom server emojis over plain unicode emojis. Copy the code exactly as shown
 (including the angle brackets) and Discord will render it:
@@ -159,6 +165,8 @@ class ChatMsg:
     author_id: int
     is_tsuki: bool
     content: str
+    # True for the single message that pinged the bot this turn.
+    is_trigger: bool = False
 
 
 @dataclass
@@ -218,9 +226,12 @@ def _build_messages(history: list[ChatMsg]) -> list[BaseMessage]:
             # foreign emoji ids.
             content = _normalize_inbound(msg.content).strip()
             if content:
-                messages.append(
-                    HumanMessage(content=f"{msg.author_name} (<@{msg.author_id}>): {content}")
-                )
+                label = f"{msg.author_name} (<@{msg.author_id}>)"
+                # Tag the invoking message so it stands out even when Gemini
+                # merges a run of consecutive messages into one turn.
+                if msg.is_trigger:
+                    label += " [↪ pinged you here]"
+                messages.append(HumanMessage(content=f"{label}: {content}"))
     return messages
 
 

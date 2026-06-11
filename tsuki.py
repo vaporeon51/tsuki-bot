@@ -844,7 +844,7 @@ async def handle_owner_whisper(message: discord.Message) -> bool:
     return True
 
 
-def _to_chat_msg(message: discord.Message) -> ChatMsg:
+def _to_chat_msg(message: discord.Message, is_trigger: bool = False) -> ChatMsg:
     # Use raw content (not clean_content) so the model sees real `<@id>`
     # mentions and `<:emoji:id>` codes instead of flattened display names.
     return ChatMsg(
@@ -852,6 +852,7 @@ def _to_chat_msg(message: discord.Message) -> ChatMsg:
         author_id=message.author.id,
         is_tsuki=message.author == bot.user,
         content=message.content,
+        is_trigger=is_trigger,
     )
 
 
@@ -875,7 +876,9 @@ async def handle_tsuki_chat(message: discord.Message) -> None:
 
             min_age = await asyncio.to_thread(get_min_age, message.guild.id) if message.guild else "18 year 1 month"
 
-            chat_msgs = [_to_chat_msg(msg) for msg in history if msg.content.strip()]
+            chat_msgs = [
+                _to_chat_msg(msg, is_trigger=(msg is message)) for msg in history if msg.content.strip()
+            ]
             result = await generate_chat_response(chat_msgs, min_age)
 
         await channel.send(
