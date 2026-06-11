@@ -2,7 +2,6 @@ import asyncio
 import re
 from dataclasses import dataclass, field
 
-from google.api_core.exceptions import ResourceExhausted
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.runnables import Runnable
 from langchain_core.tools import tool
@@ -111,13 +110,41 @@ def _build_llm(model: str) -> Runnable:
     return llm.bind_tools([get_content])  # type: ignore[list-item]
 
 
-# Built once at import (not per message) and reused across all chat responses. If the
-# primary model hits a rate limit (HTTP 429 / ResourceExhausted), LangChain
-# transparently retries the same request against the Gemma 4 fallback.
-_LLM = _build_llm(MODEL).with_fallbacks(
-    [_build_llm(FALLBACK_MODEL)],
-    exceptions_to_handle=(ResourceExhausted,),
-)
+# Built once at import (not per message) and reused across all chat responses.
+_PRIMARY = _build_llm(MODEL)
+_FALLBACK = _build_llm(FALLBACK_MODEL)
+
+
+def _is_rate_limit(exc: Exception) -> bool:
+    """Best-effort, SDK-agnostic check for a 429 / quota / rate-limit error.
+
+    We avoid importing a specific exception class because the underlying Google
+    SDK (and thus its error types) varies between langchain-google-genai versions.
+    """
+    name = type(exc).__name__.lower()
+    text = str(exc).lower()
+    return (
+        getattr(exc, "code", None) == 429
+        or getattr(exc, "status_code", None) == 429
+        or "resourceexhausted" in name
+        or "ratelimit" in name
+        or "429" in text
+        or "resource exhausted" in text
+        or "rate limit" in text
+        or "quota" in text
+    )
+
+
+async def _ainvoke(messages: list[BaseMessage]) -> AIMessage:
+    """Invoke the primary model, falling back to Gemma 4 only on rate limits."""
+    try:
+        result = await _PRIMARY.ainvoke(messages)
+    except Exception as exc:
+        if not _is_rate_limit(exc):
+            raise
+        result = await _FALLBACK.ainvoke(messages)
+    assert isinstance(result, AIMessage)
+    return result
 
 
 @dataclass
@@ -217,8 +244,7 @@ async def generate_chat_response(history: list[ChatMsg], min_age: str) -> ChatRe
     """
     messages = _build_messages(history)
 
-    ai = await _LLM.ainvoke(messages)
-    assert isinstance(ai, AIMessage)
+    ai = await _ainvoke(messages)
 
     content_calls = [c for c in ai.tool_calls if c["name"] == "get_content"]
     if not content_calls:
@@ -248,8 +274,7 @@ async def generate_chat_response(history: list[ChatMsg], min_age: str) -> ChatRe
         )
         return ChatResult(text=text, attachments=attachments)
 
-    follow_up = await _LLM.ainvoke(messages)
-    assert isinstance(follow_up, AIMessage)
+    follow_up = await _ainvoke(messages)
     text = _restore_emoji_codes(_message_text(follow_up).strip()) or _restore_emoji_codes(
         _message_text(ai).strip()
     )
