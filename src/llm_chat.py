@@ -9,7 +9,7 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 
 from src.db.utils import get_closest_roles, get_random_link_for_each_role, get_random_roles
 
-MODEL = "gemini-3.1-flash-lite"
+MODEL = "gemma-4-31b-it"  # gemini-3.1-flash-lite
 # Falls back to Gemma 4 (also supports native function calling) on rate limits.
 FALLBACK_MODEL = "gemma-4-31b-it"
 MAX_TOKENS = 512
@@ -93,7 +93,8 @@ def get_content(query: str) -> str:
     Args:
         query: An idol's name (e.g. "minji"), a group name (e.g. "newjeans"),
             or a combination of both if name is ambiguous (e.g. "ive yujin"),
-            or "random" for a random pick.
+            or "random" for a random pick. For groups use full names
+            (e.g. hearts2hearts instead of h2h, newjeans instead of njz)
     """
     # Dispatched manually in generate_chat_response so we can inject the
     # per-guild min_age and run the blocking DB calls off the event loop.
