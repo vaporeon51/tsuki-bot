@@ -907,9 +907,16 @@ def _to_chat_msg(message: discord.Message) -> ChatMsg:
     )
 
 
+# Holds in-flight gather_dead_link tasks so they aren't garbage-collected
+# before their 30s broken-link check runs.
+_chat_bg_tasks: set[asyncio.Task] = set()
+
+
 async def handle_tsuki_chat(message: discord.Message) -> None:
     channel = message.channel
     try:
+        # Only the slow generation step shows the typing indicator. Sends happen
+        # after the context closes so "typing..." doesn't linger past the reply.
         async with channel.typing():
             # Recent history (chronological) followed by the triggering message.
             history: list[discord.Message] = []
@@ -927,18 +934,17 @@ async def handle_tsuki_chat(message: discord.Message) -> None:
             chat_msgs = [_to_chat_msg(msg) for msg in history if msg.content.strip()]
             result = await generate_chat_response(chat_msgs, min_age)
 
-            # --- debug: raw message text + attachments posted to Discord ---
-            print(f"[chat] sending text: {(result.text or '...')!r}")
-            print(f"[chat] sending attachments: {result.attachments}")
-
-            await channel.send(
-                result.text or "...",
-                allowed_mentions=discord.AllowedMentions(users=True, roles=False, everyone=False),
-            )
-            for url in result.attachments:
-                link_msg = await channel.send(url)
-                # Any standalone content link gets the broken-link check.
-                await gather_dead_link(link_msg, url)
+        await channel.send(
+            result.text or "...",
+            allowed_mentions=discord.AllowedMentions(users=True, roles=False, everyone=False),
+        )
+        for url in result.attachments:
+            link_msg = await channel.send(url)
+            # Run the broken-link check in the background — it sleeps 30s, so
+            # awaiting it here would keep the handler (and typing) hanging.
+            task = asyncio.create_task(gather_dead_link(link_msg, url))
+            _chat_bg_tasks.add(task)
+            task.add_done_callback(_chat_bg_tasks.discard)
 
         await asyncio.to_thread(add_stat_count, "llm_response")
     except Exception as e:
