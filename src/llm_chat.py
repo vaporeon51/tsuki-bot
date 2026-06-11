@@ -145,9 +145,7 @@ def _build_messages(history: list[ChatMsg]) -> list[BaseMessage]:
         if msg.is_tsuki:
             messages.append(AIMessage(content=content))
         else:
-            messages.append(
-                HumanMessage(content=f"{msg.author_name} (<@{msg.author_id}>): {content}")
-            )
+            messages.append(HumanMessage(content=f"{msg.author_name} (<@{msg.author_id}>): {content}"))
     return messages
 
 
@@ -182,6 +180,14 @@ async def generate_chat_response(history: list[ChatMsg], min_age: str) -> ChatRe
     llm_with_tools = llm.bind_tools([get_content])  # type: ignore[list-item]
 
     messages = _build_messages(history)
+
+    # --- debug: exactly what the model receives (system prompt omitted) ---
+    print("[chat] === rendered history sent to model ===")
+    for m in messages:
+        if m.type == "system":
+            continue
+        print(f"[chat]   {m.type}: {_message_text(m)!r}")
+
     attachments: list[str] = []
 
     ai: AIMessage | None = None
@@ -191,12 +197,19 @@ async def generate_chat_response(history: list[ChatMsg], min_age: str) -> ChatRe
         ai = response
         messages.append(ai)
 
+        # --- debug: raw model output for this turn ---
+        print(f"[chat] model raw response: {_message_text(ai)!r}")
+        if ai.tool_calls:
+            print(f"[chat] tool calls: {ai.tool_calls}")
+
         if not ai.tool_calls:
             break
 
         for call in ai.tool_calls:
             if call["name"] == "get_content":
-                url = await _resolve_content(call["args"].get("query", "random"), min_age)
+                query = call["args"].get("query", "random")
+                url = await _resolve_content(query, min_age)
+                print(f"[chat]   get_content(query={query!r}) -> {url!r}")  # debug
                 if url:
                     attachments.append(url)
                     tool_content = "Shared a picture with the channel."
@@ -214,4 +227,9 @@ async def generate_chat_response(history: list[ChatMsg], min_age: str) -> ChatRe
     for url in attachments:
         if url not in unique_attachments:
             unique_attachments.append(url)
+
+    # --- debug: final result handed back to the bot ---
+    print(f"[chat] final text: {text!r}")
+    print(f"[chat] attachments: {unique_attachments}")
+
     return ChatResult(text=text, attachments=unique_attachments)
