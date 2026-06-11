@@ -3,7 +3,15 @@ import psycopg
 from . import CONN_DICT
 
 
+def normalize_subreddit(subreddit: str) -> str:
+    return subreddit.strip().lower()
+
+
 def set_reddit_feed(guild_id: int, channel_id: int, subreddit: str) -> None:
+    subreddit = normalize_subreddit(subreddit)
+    if not subreddit:
+        raise ValueError("Subreddit cannot be empty.")
+
     with psycopg.connect(**CONN_DICT) as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -21,7 +29,7 @@ def get_subscriptions(guild_id: int) -> list[tuple[int, str]]:
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT guild_id, subreddit, channel_id
+                SELECT DISTINCT guild_id, LOWER(TRIM(subreddit)) AS subreddit, channel_id
                 FROM reddit_feeds
                 WHERE guild_id = %s
                 """,
@@ -44,12 +52,26 @@ def unset_feeds(guild_id: int) -> None:
             )
 
 
-def get_feed_configs() -> list[tuple[int, int]]:
+def unset_subreddit_feeds(subreddit: str) -> int:
+    subreddit = normalize_subreddit(subreddit)
     with psycopg.connect(**CONN_DICT) as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT guild_id, channel_id, subreddit
+                DELETE FROM reddit_feeds
+                WHERE LOWER(TRIM(subreddit)) = %s;
+                """,
+                (subreddit,),
+            )
+            return cur.rowcount
+
+
+def get_feed_configs() -> list[tuple[int, int, str]]:
+    with psycopg.connect(**CONN_DICT) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT DISTINCT guild_id, channel_id, LOWER(TRIM(subreddit)) AS subreddit
                 FROM reddit_feeds
                 """
             )

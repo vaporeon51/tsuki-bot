@@ -7,15 +7,18 @@ from urllib.parse import urlparse
 
 import asyncpraw
 import asyncpraw.models
+import asyncprawcore
 import discord
 import requests
 from discord.ext import commands
 
 from src.config.constants import REDDIT_MAX_ATTACHMENTS
-from src.db.reddit_feeds import get_feed_configs
+from src.db.reddit_feeds import get_feed_configs, unset_subreddit_feeds
 
 REDDIT_CLIENT_ID = os.environ["REDDIT_CLIENT_ID"]
 REDDIT_SECRET = os.environ["REDDIT_SECRET"]
+UNRECOVERABLE_SUBREDDIT_STATUSES = {403, 404, 410, 451}
+UNRECOVERABLE_SUBREDDIT_REDIRECT_PATHS = {"/subreddits/search"}
 
 
 @dataclass
@@ -24,6 +27,24 @@ class RedditPost:
     created_utc: float
     is_gallery: bool
     media_urls: list[str]
+
+
+@dataclass
+class RedditFetchResult:
+    posts: list[RedditPost]
+    should_unsubscribe: bool = False
+
+
+def is_unrecoverable_subreddit_error(error: Exception) -> bool:
+    """Return whether the subreddit cannot be fetched by this bot in future cycles."""
+    if isinstance(error, asyncprawcore.exceptions.Redirect):
+        return error.path in UNRECOVERABLE_SUBREDDIT_REDIRECT_PATHS
+
+    if not isinstance(error, asyncprawcore.exceptions.ResponseException):
+        return False
+
+    status = getattr(error.response, "status", None)
+    return status in UNRECOVERABLE_SUBREDDIT_STATUSES
 
 
 def get_reddit_video_url(post: asyncpraw.models.Submission) -> str:
@@ -66,9 +87,7 @@ def get_gallery_urls(post: asyncpraw.models.Submission) -> list[str]:
         gallery_items = (source_data.get("gallery_data") or {}).get("items") or []
         if gallery_items:
             images = [
-                media_metadata[item["media_id"]]
-                for item in gallery_items
-                if item.get("media_id") in media_metadata
+                media_metadata[item["media_id"]] for item in gallery_items if item.get("media_id") in media_metadata
             ]
         else:
             images = media_metadata.values()
@@ -89,15 +108,15 @@ def get_gallery_urls(post: asyncpraw.models.Submission) -> list[str]:
 
 async def get_latest_posts(subreddit: str) -> list[asyncpraw.models.Submission]:
     """Get latest posts from kpopfap subreddit."""
-    reddit = asyncpraw.Reddit(
-        client_id=REDDIT_CLIENT_ID, client_secret=REDDIT_SECRET, user_agent="tsuki-bot"
-    )
-    subreddit = await reddit.subreddit(subreddit)
-    posts = []
-    async for post in subreddit.new(limit=10):
-        posts.append(post)
-    await reddit.close()
-    return posts
+    reddit = asyncpraw.Reddit(client_id=REDDIT_CLIENT_ID, client_secret=REDDIT_SECRET, user_agent="tsuki-bot")
+    try:
+        subreddit_obj = await reddit.subreddit(subreddit)
+        posts = []
+        async for post in subreddit_obj.new(limit=10):
+            posts.append(post)
+        return posts
+    finally:
+        await reddit.close()
 
 
 def get_image_files(urls: list[str]) -> list[discord.File]:
@@ -135,13 +154,13 @@ def parse_post(post: asyncpraw.models.Submission) -> RedditPost:
     )
 
 
-async def get_and_parse_posts(subreddit: str) -> list[RedditPost]:
+async def get_and_parse_posts(subreddit: str) -> RedditFetchResult:
     """Fetch and parse latest posts for a subreddit."""
     try:
         posts = await get_latest_posts(subreddit)
     except Exception as e:
         print(f"Could not get posts from subreddit: {subreddit}. Error: {str(e)}")
-        return []
+        return RedditFetchResult(posts=[], should_unsubscribe=is_unrecoverable_subreddit_error(e))
 
     parsed_posts: list[RedditPost] = []
     for post in posts:
@@ -151,7 +170,7 @@ async def get_and_parse_posts(subreddit: str) -> list[RedditPost]:
             print(f"Could not parse post {post.title} from subreddit {subreddit}. Error: {str(e)}")
             continue
 
-    return parsed_posts
+    return RedditFetchResult(posts=parsed_posts)
 
 
 async def update_reddit_feeds(bot: commands.Bot, lookback_secs: int) -> None:
@@ -166,10 +185,13 @@ async def update_reddit_feeds(bot: commands.Bot, lookback_secs: int) -> None:
         posts_by_subreddit = {}
 
         for subreddit in all_subreddits:
-            parsed_posts = await get_and_parse_posts(subreddit)
-            recent_posts = [
-                post for post in parsed_posts if curr_time - post.created_utc < lookback_secs
-            ]
+            fetch_result = await get_and_parse_posts(subreddit)
+            if fetch_result.should_unsubscribe:
+                deleted_count = unset_subreddit_feeds(subreddit)
+                print(f"Removed {deleted_count} reddit feed subscriptions for unrecoverable subreddit: {subreddit}")
+                continue
+
+            recent_posts = [post for post in fetch_result.posts if curr_time - post.created_utc < lookback_secs]
             posts_by_subreddit[subreddit] = sorted(recent_posts, key=lambda x: x.created_utc)
             num_new_posts[subreddit] = len(recent_posts)
 
