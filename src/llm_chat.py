@@ -1,6 +1,6 @@
 import asyncio
-import logging
 import re
+import time
 from dataclasses import dataclass, field
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
@@ -9,12 +9,8 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 
 from src.db.utils import get_closest_roles, get_random_link_for_each_role, get_random_roles
 
-logger = logging.getLogger(__name__)
-
 MODEL = "gemini-3.1-flash-lite"
 MAX_TOKENS = 512
-# Upper bound on round-trips through the model when it keeps asking for tools.
-MAX_TOOL_ITERATIONS = 3
 
 # Custom server emojis Hanni can use, keyed by a short description. Discord renders
 # these literal strings inline (`<a:name:id>` for animated, `<:name:id>` for static),
@@ -79,8 +75,9 @@ Prefer these custom server emojis over plain unicode emojis. Copy the code exact
 
 # Sharing kpop content
 When it's natural to share a picture or gif of an idol or group, call the `get_content` tool.
-Share at most one piece of content per reply. Keep talking normally in your text response — the
-picture is attached automatically, so don't paste a link or describe the file yourself.
+ALWAYS write your normal chatty reply in the SAME message as the tool call — never send just a
+tool call with no words. Share at most one piece of content per reply, and don't paste a link or
+describe the file yourself; the picture is attached automatically.
 """
 
 
@@ -95,6 +92,17 @@ def get_content(query: str) -> str:
     # Dispatched manually in generate_chat_response so we can inject the
     # per-guild min_age and run the blocking DB calls off the event loop.
     raise NotImplementedError
+
+
+# Built once at import (not per message) and reused across all chat responses.
+_BASE_LLM = ChatGoogleGenerativeAI(
+    model=MODEL,
+    temperature=0.4,
+    max_tokens=MAX_TOKENS,
+    timeout=20,
+    max_retries=2,
+)
+_LLM = _BASE_LLM.bind_tools([get_content])  # type: ignore[list-item]
 
 
 @dataclass
@@ -145,9 +153,7 @@ def _build_messages(history: list[ChatMsg]) -> list[BaseMessage]:
         if msg.is_tsuki:
             messages.append(AIMessage(content=content))
         else:
-            messages.append(
-                HumanMessage(content=f"{msg.author_name} (<@{msg.author_id}>): {content}")
-            )
+            messages.append(HumanMessage(content=f"{msg.author_name} (<@{msg.author_id}>): {content}"))
     return messages
 
 
@@ -166,54 +172,50 @@ async def _resolve_content(query: str, min_age: str) -> str | None:
 
 
 async def generate_chat_response(history: list[ChatMsg], min_age: str) -> ChatResult:
-    """Generate Tsuki's in-character reply for the given conversation history.
+    """Generate Hanni's in-character reply for the given conversation history.
 
-    Runs a native tool-calling loop: the model may call `get_content`, which we
-    resolve against the content DB (honoring the guild's min_age) and feed back
-    as a ToolMessage before asking the model for its final text reply.
+    One model call by default: the model returns its text reply and (optionally)
+    a `get_content` tool call together, so we attach the picture without a second
+    round-trip. Only if a content search comes back empty do we make a follow-up
+    call, feeding the result back so she can respond gracefully.
     """
-    llm = ChatGoogleGenerativeAI(
-        model=MODEL,
-        temperature=0.4,
-        max_tokens=MAX_TOKENS,
-        timeout=20,
-        max_retries=2,
-    )
-    llm_with_tools = llm.bind_tools([get_content])  # type: ignore[list-item]
-
     messages = _build_messages(history)
+
+    t0 = time.perf_counter()
+    ai = await _LLM.ainvoke(messages)
+    print(f"[timing] llm call 1: {time.perf_counter() - t0:.2f}s")
+    assert isinstance(ai, AIMessage)
+
+    content_calls = [c for c in ai.tool_calls if c["name"] == "get_content"]
+    if not content_calls:
+        return ChatResult(text=_message_text(ai).strip())
+
+    # Resolve each content request against the DB.
+    messages.append(ai)
     attachments: list[str] = []
+    any_failed = False
+    for call in content_calls:
+        td = time.perf_counter()
+        url = await _resolve_content(call["args"].get("query", "random"), min_age)
+        print(f"[timing] get_content db: {time.perf_counter() - td:.2f}s")
+        if url:
+            if url not in attachments:
+                attachments.append(url)
+            tool_content = "Shared the picture with the channel."
+        else:
+            any_failed = True
+            tool_content = "Couldn't find any matching content — tell them you came up empty."
+        messages.append(ToolMessage(content=tool_content, tool_call_id=call["id"]))
 
-    ai: AIMessage | None = None
-    for _ in range(MAX_TOOL_ITERATIONS):
-        response = await llm_with_tools.ainvoke(messages)
-        assert isinstance(response, AIMessage)
-        ai = response
-        messages.append(ai)
+    # Happy path: the search found something and her reply is already in call 1,
+    # so we're done in a single call. Only re-invoke when a search failed.
+    if not any_failed:
+        text = _message_text(ai).strip() or f"here you go !! {HANNI_EMOJIS['giggling']}"
+        return ChatResult(text=text, attachments=attachments)
 
-        if not ai.tool_calls:
-            break
-
-        for call in ai.tool_calls:
-            if call["name"] == "get_content":
-                query = call["args"].get("query", "random")
-                url = await _resolve_content(query, min_age)
-                if url:
-                    attachments.append(url)
-                    tool_content = "Shared a picture with the channel."
-                else:
-                    tool_content = "No matching content was found; let them know nothing came up."
-            else:
-                tool_content = f"Unknown tool: {call['name']}"
-            messages.append(ToolMessage(content=tool_content, tool_call_id=call["id"]))
-    else:
-        logger.warning("get_content tool loop hit MAX_TOOL_ITERATIONS without a final reply")
-
-    text = _message_text(ai).strip() if ai is not None else ""
-    # Dedup in case the model surfaced the same URL twice in one turn.
-    unique_attachments: list[str] = []
-    for url in attachments:
-        if url not in unique_attachments:
-            unique_attachments.append(url)
-
-    return ChatResult(text=text, attachments=unique_attachments)
+    t1 = time.perf_counter()
+    follow_up = await _LLM.ainvoke(messages)
+    print(f"[timing] llm call 2 (search failed): {time.perf_counter() - t1:.2f}s")
+    assert isinstance(follow_up, AIMessage)
+    text = _message_text(follow_up).strip() or _message_text(ai).strip()
+    return ChatResult(text=text, attachments=attachments)
