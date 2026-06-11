@@ -899,7 +899,11 @@ async def handle_owner_whisper(message: discord.Message) -> bool:
     try:
         sent = await channel.send(
             whisper_text,
-            allowed_mentions=discord.AllowedMentions.none(),
+            allowed_mentions=discord.AllowedMentions(
+                users=True,
+                roles=False,
+                everyone=False,
+            ),
         )
     except discord.Forbidden:
         await message.channel.send("I do not have permission to send messages there.")
