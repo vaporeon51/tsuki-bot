@@ -199,8 +199,20 @@ async def generate_chat_response(history: list[ChatMsg], min_age: str) -> ChatRe
     """
     messages = _build_messages(history)
 
+    # --- debug: exactly what the model receives (system prompt omitted) ---
+    print("[chat] === rendered history sent to model ===")
+    for m in messages:
+        if m.type == "system":
+            continue
+        print(f"[chat]   {m.type}: {_message_text(m)!r}")
+
     ai = await _LLM.ainvoke(messages)
     assert isinstance(ai, AIMessage)
+
+    # --- debug: raw model output ---
+    print(f"[chat] model raw response: {_message_text(ai)!r}")
+    if ai.tool_calls:
+        print(f"[chat] tool calls: {ai.tool_calls}")
 
     content_calls = [c for c in ai.tool_calls if c["name"] == "get_content"]
     if not content_calls:
@@ -232,6 +244,7 @@ async def generate_chat_response(history: list[ChatMsg], min_age: str) -> ChatRe
 
     follow_up = await _LLM.ainvoke(messages)
     assert isinstance(follow_up, AIMessage)
+    print(f"[chat] model raw response (call 2): {_message_text(follow_up)!r}")  # debug
     text = _restore_emoji_codes(_message_text(follow_up).strip()) or _restore_emoji_codes(
         _message_text(ai).strip()
     )

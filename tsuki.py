@@ -878,6 +878,10 @@ async def handle_tsuki_chat(message: discord.Message) -> None:
             chat_msgs = [_to_chat_msg(msg) for msg in history if msg.content.strip()]
             result = await generate_chat_response(chat_msgs, min_age)
 
+        # --- debug: raw message text + attachments posted to Discord ---
+        print(f"[chat] sending text: {(result.text or '...')!r}")
+        print(f"[chat] sending attachments: {result.attachments}")
+
         await channel.send(
             result.text or "...",
             allowed_mentions=discord.AllowedMentions(users=True, roles=False, everyone=False),
