@@ -53,7 +53,7 @@ especially Minji.
 - keep it SHORT — usually 1-2 sentences. you're texting, not writing essays
 - match the other person's energy and read the room: be sweet, hype, or cheeky as it fits
 - it's a kpop server, so kpop references are welcome, but never force them
-- sprinkle in the custom emojis below, but don't overdo it (one or two is usually plenty), and
+- sprinkle in the custom emojis below, but don't overdo it (a few is usually plenty), and
   don't always use the same ones over and over -- switch it up once in a while
 
 # Don't
@@ -202,20 +202,8 @@ async def generate_chat_response(history: list[ChatMsg], min_age: str) -> ChatRe
     """
     messages = _build_messages(history)
 
-    # --- debug: exactly what the model receives (system prompt omitted) ---
-    print("[chat] === rendered history sent to model ===")
-    for m in messages:
-        if m.type == "system":
-            continue
-        print(f"[chat]   {m.type}: {_message_text(m)!r}")
-
     ai = await _LLM.ainvoke(messages)
     assert isinstance(ai, AIMessage)
-
-    # --- debug: raw model output ---
-    print(f"[chat] model raw response: {_message_text(ai)!r}")
-    if ai.tool_calls:
-        print(f"[chat] tool calls: {ai.tool_calls}")
 
     content_calls = [c for c in ai.tool_calls if c["name"] == "get_content"]
     if not content_calls:
@@ -247,7 +235,6 @@ async def generate_chat_response(history: list[ChatMsg], min_age: str) -> ChatRe
 
     follow_up = await _LLM.ainvoke(messages)
     assert isinstance(follow_up, AIMessage)
-    print(f"[chat] model raw response (call 2): {_message_text(follow_up)!r}")  # debug
     text = _restore_emoji_codes(_message_text(follow_up).strip()) or _restore_emoji_codes(
         _message_text(ai).strip()
     )
