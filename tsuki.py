@@ -920,7 +920,7 @@ async def handle_tsuki_chat(message: discord.Message) -> None:
         async with channel.typing():
             # Recent history (chronological) followed by the triggering message.
             history: list[discord.Message] = []
-            async for msg in channel.history(limit=20, before=message):
+            async for msg in channel.history(limit=30, before=message):
                 history.append(msg)
             history.reverse()
             history.append(message)
