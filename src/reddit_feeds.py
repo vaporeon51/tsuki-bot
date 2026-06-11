@@ -18,6 +18,7 @@ from src.db.reddit_feeds import get_feed_configs, unset_subreddit_feeds
 REDDIT_CLIENT_ID = os.environ["REDDIT_CLIENT_ID"]
 REDDIT_SECRET = os.environ["REDDIT_SECRET"]
 UNRECOVERABLE_SUBREDDIT_STATUSES = {403, 404, 410, 451}
+UNRECOVERABLE_SUBREDDIT_REDIRECT_PATHS = {"/subreddits/search"}
 
 
 @dataclass
@@ -36,6 +37,9 @@ class RedditFetchResult:
 
 def is_unrecoverable_subreddit_error(error: Exception) -> bool:
     """Return whether the subreddit cannot be fetched by this bot in future cycles."""
+    if isinstance(error, asyncprawcore.exceptions.Redirect):
+        return error.path in UNRECOVERABLE_SUBREDDIT_REDIRECT_PATHS
+
     if not isinstance(error, asyncprawcore.exceptions.ResponseException):
         return False
 
