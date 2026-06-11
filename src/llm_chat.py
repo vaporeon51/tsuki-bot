@@ -134,7 +134,10 @@ def _normalize_inbound(text: str) -> str:
 # Discord code, used to upgrade any ":name:" shorthand the model emits back into a
 # code that actually renders.
 _EMOJI_BY_NAME = {code.split(":")[1]: code for code in HANNI_EMOJIS.values()}
-_SHORTCODE = re.compile(r":([a-zA-Z0-9_]+):")
+# Bare ":name:" shorthand. The negative lookahead skips the inner colons of a full
+# "<a:name:id>" code (always followed by the numeric id), so we never re-wrap a
+# code the model already wrote correctly.
+_SHORTCODE = re.compile(r":([a-zA-Z0-9_]+):(?!\d)")
 
 
 def _restore_emoji_codes(text: str) -> str:
