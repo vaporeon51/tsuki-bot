@@ -870,6 +870,7 @@ async def is_trigger_message(message):
 
 
 async def handle_owner_whisper(message: discord.Message) -> bool:
+    # Usage: DM the bot with `whisper <channel_id> <message>`.
     if message.author.id != OWNER_USER_ID:
         return False
     if not isinstance(message.channel, discord.DMChannel):
