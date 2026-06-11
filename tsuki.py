@@ -58,11 +58,14 @@ from src.db.bias_rater import (
 )
 
 TOKEN = os.environ.get("TOKEN")
+OWNER_USER_ID = 1298088341241335841
+OWNER_WHISPER_PREFIX = "whisper "
 
 
 class TsukiBot(commands.Bot):
     def __init__(self):
         intents = discord.Intents.default()
+        intents.message_content = True
         super().__init__(
             intents=intents, command_prefix="['/tsuki', '/tk', '!']", help_command=None
         )
@@ -864,6 +867,59 @@ async def is_trigger_message(message):
         except:
             pass
     return False
+
+
+async def handle_owner_whisper(message: discord.Message) -> bool:
+    if message.author.id != OWNER_USER_ID:
+        return False
+    if not isinstance(message.channel, discord.DMChannel):
+        return False
+    if not message.content.startswith(OWNER_WHISPER_PREFIX):
+        return False
+
+    command_text = message.content[len(OWNER_WHISPER_PREFIX) :].strip()
+    try:
+        channel_id_text, whisper_text = command_text.split(maxsplit=1)
+        channel_id = int(channel_id_text)
+    except ValueError:
+        await message.channel.send("Usage: `whisper <channel_id> <message>`")
+        return True
+
+    try:
+        channel = bot.get_channel(channel_id) or await bot.fetch_channel(channel_id)
+    except (discord.Forbidden, discord.HTTPException, discord.NotFound):
+        await message.channel.send("I could not find or access that channel.")
+        return True
+
+    if not isinstance(channel, discord.abc.Messageable):
+        await message.channel.send("That target is not a messageable channel.")
+        return True
+
+    try:
+        sent = await channel.send(
+            whisper_text,
+            allowed_mentions=discord.AllowedMentions.none(),
+        )
+    except discord.Forbidden:
+        await message.channel.send("I do not have permission to send messages there.")
+        return True
+    except discord.HTTPException as e:
+        await message.channel.send(f"Failed to send message: {e}")
+        return True
+
+    print(f"Owner whisper sent to channel {channel_id}, message {sent.id}")
+    await message.channel.send(f"Sent to <#{channel_id}>.")
+    return True
+
+
+@bot.event
+async def on_message(message: discord.Message):
+    if message.author == bot.user:
+        return
+    if not isinstance(message.channel, discord.DMChannel):
+        return
+    if await handle_owner_whisper(message):
+        return
 
 
 # # Disabling for now until LLM and prompt and emoji stuff are all sorted out
