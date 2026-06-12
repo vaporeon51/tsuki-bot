@@ -130,9 +130,9 @@ def get_content(query: str) -> str:
 def _build_llm(model: str) -> Runnable:
     kwargs: dict[str, Any] = dict(
         model=model,
-        temperature=0.4,
+        temperature=0.7,
         max_tokens=MAX_TOKENS,
-        timeout=20,
+        timeout=30,
         max_retries=2,
     )
     if model.startswith("gemini-3.1"):
