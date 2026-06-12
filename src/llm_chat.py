@@ -117,14 +117,18 @@ def get_content(query: str) -> str:
 
 
 def _build_llm(model: str) -> Runnable:
-    llm = ChatGoogleGenerativeAI(
+    kwargs = dict(
         model=model,
         temperature=0.4,
         max_tokens=MAX_TOKENS,
         timeout=20,
         max_retries=2,
-        thinking_level="low",
     )
+    if model.startswith("gemini-3"):
+        kwargs["thinking_level"] = "low"
+    elif model.startswith("gemma-4"):
+        kwargs["thinking_budget"] = 256
+    llm = ChatGoogleGenerativeAI(**kwargs)
     return llm.bind_tools([get_content])  # type: ignore[list-item]
 
 
