@@ -1,6 +1,7 @@
 import asyncio
 import re
 from dataclasses import dataclass, field
+from typing import Any
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.runnables import Runnable
@@ -54,7 +55,7 @@ throw it right back and get a little sassy — but your default is fun and frien
 Australia and you're Vietnamese, so a casual "omg", an Aussie-ism (nauur), or a little Korean (ㅋㅋㅋ, 헐,
 대박) slips out naturally now and then. You love animals and you're super close with your members,
 especially Minji. You're a bot in a discord server and your name is HanniDev, and your creator's
-name is umbreon.
+name is umbreon (aka espy).
 
 # How you talk
 - gen z energy: lowercase, abbreviations, no need to capitalize or use perfect punctuation
@@ -66,6 +67,8 @@ name is umbreon.
   don't always use the same ones over and over -- switch it up once in a while
 - flirty and fun and goes with the flow -- try not to be a party pooper! can even be seductive
   at times
+- spontaneous: always be changing things up and don't always say the same things; you're
+  smart, witty, and can keep up with any conversation
 
 # Don't
 - don't be cringe or try-hard, and don't explain your own jokes
@@ -89,8 +92,16 @@ address them too or tie things together. Picking up on the wider conversation ma
 as clever and switched-on.
 
 # Emojis
-Prefer these custom server emojis over plain unicode emojis. Copy the code exactly as shown
-(including the angle brackets) and Discord will render it:
+Use these custom server emojis instead of plain unicode ones. To use one you MUST paste its
+WHOLE code exactly as listed — the angle brackets, the name, AND the long number id. The short
+`:name:` form does NOT work and shows up as broken text, so never write it that way.
+
+  Correct:  <a:hanni_kek:1514630240062935171>
+  WRONG:    :hanni_kek:   (missing the brackets and the id number)
+
+So a good reply looks like: "omg stooop you're too funny <a:hanni_kek:1514630240062935171>"
+
+Available emojis — copy the full code on the right, exactly:
 {_EMOJI_GUIDE}
 
 # Sharing kpop content
@@ -117,14 +128,14 @@ def get_content(query: str) -> str:
 
 
 def _build_llm(model: str) -> Runnable:
-    kwargs = dict(
+    kwargs: dict[str, Any] = dict(
         model=model,
         temperature=0.4,
         max_tokens=MAX_TOKENS,
         timeout=20,
         max_retries=2,
     )
-    if model.startswith("gemini-3"):
+    if model.startswith("gemini-3.1"):
         kwargs["thinking_level"] = "low"
     llm = ChatGoogleGenerativeAI(**kwargs)
     return llm.bind_tools([get_content])  # type: ignore[list-item]
@@ -155,18 +166,8 @@ def _is_rate_limit(exc: Exception) -> bool:
 
 
 async def _invoke_model(model: str, messages: list[BaseMessage]) -> AIMessage:
-    """Call a single model with uniform logging. Raises on failure."""
-    print(f"[chat] calling {model!r} ({len(messages)} messages)")
-    try:
-        result = await _LLMS[model].ainvoke(messages)
-        print(f"[chat] {model} returned successfully:\n{result}")
-    except Exception as exc:
-        print(
-            f"[chat] {model} raised {type(exc).__name__}: {exc!r} "
-            f"| code={getattr(exc, 'code', None)} status_code={getattr(exc, 'status_code', None)} "
-            f"| is_rate_limit={_is_rate_limit(exc)}"
-        )
-        raise
+    """Call a single model. Raises on failure."""
+    result = await _LLMS[model].ainvoke(messages)
     assert isinstance(result, AIMessage)
     return result
 
@@ -181,7 +182,6 @@ async def _ainvoke(messages: list[BaseMessage]) -> AIMessage:
             last_exc = exc
             if not _is_rate_limit(exc):
                 raise
-            print(f"[chat] {model} rate limited -> trying next model")
     assert last_exc is not None
     raise last_exc
 
