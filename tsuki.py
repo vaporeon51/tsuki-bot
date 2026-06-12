@@ -935,7 +935,7 @@ async def handle_tsuki_chat(message: discord.Message) -> None:
             result = await generate_chat_response(chat_msgs, min_age)
 
         await channel.send(
-            result.text or "...",
+            result.text or "<:hanni_despair:1515066515408425031>",
             allowed_mentions=discord.AllowedMentions(users=True, roles=False, everyone=False),
         )
         for url in result.attachments:
@@ -943,8 +943,10 @@ async def handle_tsuki_chat(message: discord.Message) -> None:
 
         await asyncio.to_thread(add_stat_count, "llm_response")
     except Exception as e:
-        print(f"Tsuki chat error: {e}")
-        await channel.send(f"sorry, i glitched out for a sec ;-; ({e})")
+        print(f"LLM chat error: {e}")
+        await channel.send(
+            f"something happened inside me <:hanni_despair:1515066515408425031>\n{e}"
+        )
 
 
 @bot.event
