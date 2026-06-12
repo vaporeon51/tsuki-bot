@@ -15,7 +15,7 @@ MODELS = [
     "gemini-3.1-flash-lite",  # primary
     "gemma-4-31b-it",  # fallback
 ]
-MAX_TOKENS = 512
+MAX_TOKENS = 1024
 
 # Custom server emojis Hanni can use, keyed by a short description. Discord renders
 # these literal strings inline (`<a:name:id>` for animated, `<:name:id>` for static),
@@ -123,6 +123,7 @@ def _build_llm(model: str) -> Runnable:
         max_tokens=MAX_TOKENS,
         timeout=20,
         max_retries=2,
+        thinking_level="low",
     )
     return llm.bind_tools([get_content])  # type: ignore[list-item]
 
