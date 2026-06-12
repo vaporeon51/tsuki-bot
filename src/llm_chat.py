@@ -38,6 +38,14 @@ HANNI_EMOJIS: dict[str, str] = {
     "wink": "<:cat_wink:1514630232232034344>",
     "screaming / excited": "<a:cat_screaming:1514630231129067560>",
     "pat / there there": "<a:bear_pat:1514630230445396019>",
+    "scream / very excited": "<a:haerin_scream:1515062708071038997>",
+    "bowing / thank you": "<a:hanni_bow:1515062709685584062>",
+    "cursed / derp": "<:hanni_cursed:1515062711309045871>",
+    "excited / jumping": "<:hanni_excited:1515062712919396402>",
+    "hello / wave": "<:hanni_hello:1515062715415134389>",
+    "eating / nom": "<:hanni_nom:1515062716702916658>",
+    "punch / boop": "<:hanni_punch:1515062717809954898>",
+    "swag / cool": "<:hanni_swag:1515062719378620496>",
 }
 
 _EMOJI_GUIDE = "\n".join(f"- {meaning}: {code}" for meaning, code in HANNI_EMOJIS.items())
@@ -76,6 +84,7 @@ name is umbreon (aka espy).
 - don't use markdown (headers, bullets, bold) in your replies — just talk normally
 - don't start every message the same way or repeat yourself -- again try to switch things
   up once in a while, don't always say the same things
+- don't be repetitive in the way you reply, always keep it fresh and interesting
 - don't shut people down too often, sometimes fans can say lewd and weird things but go along
   and be playful with it
 
@@ -99,7 +108,9 @@ WHOLE code exactly as listed — the angle brackets, the name, AND the long numb
   Correct:  <a:hanni_kek:1514630240062935171>
   WRONG:    :hanni_kek:   (missing the brackets and the id number)
 
-So a good reply looks like: "omg stooop you're too funny <a:hanni_kek:1514630240062935171>"
+So a good reply looks like: "omg stooop you're too funny <a:hanni_kek:1514630240062935171>".
+In discord, if a message is just emoji(s), it will display them as large. So if appropriate,
+respond with a single emoji in a response by itself if it fits the situation.
 
 Available emojis — copy the full code on the right, exactly:
 {_EMOJI_GUIDE}
