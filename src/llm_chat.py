@@ -156,6 +156,7 @@ async def _invoke_model(model: str, messages: list[BaseMessage]) -> AIMessage:
     print(f"[chat] calling {model!r} ({len(messages)} messages)")
     try:
         result = await _LLMS[model].ainvoke(messages)
+        print(f"[chat] {model} returned successfully:\n{result}")
     except Exception as exc:
         print(
             f"[chat] {model} raised {type(exc).__name__}: {exc!r} "
