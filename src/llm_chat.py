@@ -15,7 +15,7 @@ MODELS = [
     "gemini-3.1-flash-lite",  # primary
     "gemma-4-31b-it",  # fallback
 ]
-MAX_TOKENS = 1024
+MAX_TOKENS = 2048
 
 # Custom server emojis Hanni can use, keyed by a short description. Discord renders
 # these literal strings inline (`<a:name:id>` for animated, `<:name:id>` for static),
@@ -126,8 +126,6 @@ def _build_llm(model: str) -> Runnable:
     )
     if model.startswith("gemini-3"):
         kwargs["thinking_level"] = "low"
-    elif model.startswith("gemma-4"):
-        kwargs["thinking_budget"] = 256
     llm = ChatGoogleGenerativeAI(**kwargs)
     return llm.bind_tools([get_content])  # type: ignore[list-item]
 
