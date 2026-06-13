@@ -53,7 +53,8 @@ from src.discord_ui.bias_rater import (
     build_group_leaderboard_embeds,
     build_leaderboard_embeds,
 )
-from src.llm_chat import ChatMsg, generate_chat_response, HANNI_EMOJIS
+from src.llm_chat import ChatMsg, generate_chat_response, HANNI_EMOJIS, OVERLOAD_MESSAGES
+from src.rate_limit import ChannelRateLimiter, Decision
 from src.reaction.gather import gather_dead_link, gather_reactions
 from src.reddit_feeds import update_reddit_feeds
 
@@ -908,8 +909,23 @@ def _to_chat_msg(message: discord.Message, is_trigger: bool = False) -> ChatMsg:
     )
 
 
+# Per-channel spam guard: a short burst of replies is fine, then it throttles to
+# ~1 reply / refill_seconds and posts a "slow down" notice at most once per window.
+_rate_limiter = ChannelRateLimiter(capacity=4, refill_seconds=15, notify_cooldown=30)
+
+
 async def handle_tsuki_chat(message: discord.Message) -> None:
     channel = message.channel
+
+    # Per-channel rate limit; the owner is exempt so testing isn't throttled.
+    if message.author.id != OWNER_USER_ID:
+        decision = _rate_limiter.check(channel.id)
+        if decision is Decision.DENY_NOTIFY:
+            await channel.send(random.choice(OVERLOAD_MESSAGES))
+            return
+        if decision is Decision.DENY_SILENT:
+            return
+
     try:
         # Only the slow generation step shows the typing indicator. Sends happen
         # after the context closes so "typing..." doesn't linger past the reply.

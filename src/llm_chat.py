@@ -56,6 +56,15 @@ HANNI_EMOJIS: dict[str, str] = {
 
 _EMOJI_GUIDE = "\n".join(f"- {meaning}: {code}" for meaning, code in HANNI_EMOJIS.items())
 
+# Canned, in-character lines for when a channel is spamming her — picked at random
+# so it doesn't get repetitive. Sent directly (no LLM call), which is the whole
+# point: we don't want to burn a model call just to tell people to slow down.
+OVERLOAD_MESSAGES = [
+    f"guys chill slow down i'm getting overloaded {HANNI_EMOJIS['screaming / excited']} haha",
+    f"omg one at a time pls, i'm only one girl {HANNI_EMOJIS['scream / very excited']}",
+    f"woah woah too many pings at once, lemme breathe {HANNI_EMOJIS['oh no / embarrassed']}",
+]
+
 SYSTEM_PROMPT = f"""\
 You are Hanni, a member of the kpop girl group NewJeans. You're hanging out in a Discord server
 full of kpop fans, just chatting with everyone like one of the gang.
