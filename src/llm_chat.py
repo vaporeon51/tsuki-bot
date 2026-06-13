@@ -187,7 +187,8 @@ def _is_rate_limit(exc: Exception) -> bool:
 async def _invoke_model(model: str, messages: list[BaseMessage]) -> AIMessage:
     """Call a single model. Raises on failure."""
     result = await _LLMS[model].ainvoke(messages)
-    assert isinstance(result, AIMessage)
+    if not isinstance(result, AIMessage):
+        raise RuntimeError(f"LLM invoke of {model} returned non-AIMessage: {result}")
     return result
 
 
@@ -200,9 +201,8 @@ async def _ainvoke(messages: list[BaseMessage]) -> AIMessage:
         except Exception as exc:
             last_exc = exc
             if not _is_rate_limit(exc):
-                raise
-    assert last_exc is not None
-    raise last_exc
+                raise RuntimeError(f"LLM invoke of {model} failed: {exc}")
+    raise RuntimeError(f"All LLM models failed, last tried {MODELS[-1]}: {last_exc}")
 
 
 @dataclass
@@ -313,20 +313,23 @@ async def generate_chat_response(history: list[ChatMsg], min_age: str) -> ChatRe
     if not content_calls:
         return ChatResult(text=_restore_emoji_codes(_message_text(ai).strip()))
 
-    # Resolve each content request against the DB.
-    messages.append(ai)
-    attachments: list[str] = []
-    any_failed = False
-    for call in content_calls:
-        url = await _resolve_content(call["args"].get("query", "random"), min_age)
-        if url:
-            if url not in attachments:
-                attachments.append(url)
-            tool_content = "Shared the picture with the channel."
-        else:
-            any_failed = True
-            tool_content = "Couldn't find any matching content — tell them you came up empty."
-        messages.append(ToolMessage(content=tool_content, tool_call_id=call["id"]))
+    try:
+        # Resolve each content request against the DB.
+        messages.append(ai)
+        attachments: list[str] = []
+        any_failed = False
+        for call in content_calls:
+            url = await _resolve_content(call["args"].get("query", "random"), min_age)
+            if url:
+                if url not in attachments:
+                    attachments.append(url)
+                tool_content = "Shared the picture with the channel."
+            else:
+                any_failed = True
+                tool_content = "Couldn't find any matching content — tell them you came up empty."
+            messages.append(ToolMessage(content=tool_content, tool_call_id=call["id"]))
+    except Exception as e:
+        raise RuntimeError(f"LLM succeeded but content resolution failed: {e}")
 
     # Happy path: the search found something and her reply is already in call 1,
     # so we're done in a single call. Only re-invoke when a search failed.

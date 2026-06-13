@@ -53,7 +53,7 @@ from src.discord_ui.bias_rater import (
     build_group_leaderboard_embeds,
     build_leaderboard_embeds,
 )
-from src.llm_chat import ChatMsg, generate_chat_response
+from src.llm_chat import ChatMsg, generate_chat_response, HANNI_EMOJIS
 from src.reaction.gather import gather_dead_link, gather_reactions
 from src.reddit_feeds import update_reddit_feeds
 
@@ -934,19 +934,20 @@ async def handle_tsuki_chat(message: discord.Message) -> None:
             ]
             result = await generate_chat_response(chat_msgs, min_age)
 
-        await channel.send(
-            result.text or "<:hanni_despair:1515066515408425031>",
-            allowed_mentions=discord.AllowedMentions(users=True, roles=False, everyone=False),
-        )
-        for url in result.attachments:
-            await channel.send(url)
+        try:
+            await channel.send(
+                result.text or HANNI_EMOJIS["despair"],
+                allowed_mentions=discord.AllowedMentions(users=True, roles=False, everyone=False),
+            )
+            for url in result.attachments:
+                await channel.send(url)
+        except Exception as e:
+            raise RuntimeError(f"LLM completed but discord send failed: {e}")
 
         await asyncio.to_thread(add_stat_count, "llm_response")
     except Exception as e:
         print(f"LLM chat error: {e}")
-        await channel.send(
-            f"something happened inside me <:hanni_despair:1515066515408425031>\n{e}"
-        )
+        await channel.send(f"something happened inside me {HANNI_EMOJIS['despair']}\n{e}")
 
 
 @bot.event
