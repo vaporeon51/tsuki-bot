@@ -15,6 +15,7 @@ from src.db.utils import get_closest_roles, get_random_link_for_each_role, get_r
 MODELS = [
     "gemini-3.1-flash-lite",  # primary
     "gemma-4-31b-it",  # fallback
+    "gemma-4-26b-a4b-it",  # fallback
 ]
 MAX_TOKENS = 2048
 
@@ -173,14 +174,16 @@ def _is_rate_limit(exc: Exception) -> bool:
     name = type(exc).__name__.lower()
     text = str(exc).lower()
     return (
-        getattr(exc, "code", None) == 429
-        or getattr(exc, "status_code", None) == 429
+        getattr(exc, "code", None) in [429, 500]
+        or getattr(exc, "status_code", None) in [429, 500]
         or "resourceexhausted" in name
         or "ratelimit" in name
+        or "internal" in name
         or "429" in text
         or "resource exhausted" in text
         or "rate limit" in text
         or "quota" in text
+        or "internal error" in text
     )
 
 
