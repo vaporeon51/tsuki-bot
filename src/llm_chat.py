@@ -15,7 +15,6 @@ from src.db.utils import get_closest_roles, get_random_link_for_each_role, get_r
 MODELS = [
     "gemini-3.1-flash-lite",  # primary
     "gemma-4-31b-it",  # fallback
-    "gemma-4-26b-a4b-it",  # fallback
 ]
 MAX_TOKENS = 2048
 
