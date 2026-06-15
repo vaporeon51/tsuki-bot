@@ -900,12 +900,25 @@ async def handle_owner_whisper(message: discord.Message) -> bool:
 def _to_chat_msg(message: discord.Message, is_trigger: bool = False) -> ChatMsg:
     # Use raw content (not clean_content) so the model sees real `<@id>`
     # mentions and `<:emoji:id>` codes instead of flattened display names.
+    reply_to_author = None
+    reply_to_excerpt = None
+    ref = message.reference
+    if ref is not None:
+        # Discord inlines the referenced message as `reference.resolved` for
+        # replies, including parents older than our history window. It may be a
+        # DeletedReferencedMessage or None (uncached), which we just skip.
+        parent = ref.resolved
+        if isinstance(parent, discord.Message):
+            reply_to_author = parent.author.display_name
+            reply_to_excerpt = parent.content
     return ChatMsg(
         author_name=message.author.display_name,
         author_id=message.author.id,
         is_tsuki=message.author == bot.user,
         content=message.content,
         is_trigger=is_trigger,
+        reply_to_author=reply_to_author,
+        reply_to_excerpt=reply_to_excerpt,
     )
 
 
