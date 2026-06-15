@@ -24,27 +24,6 @@ from src.config.constants import (
     UPVOTE_EMOTE,
 )
 from src.content_update import run_content_links_update
-from src.db.birthday_feed import set_birthday_feed, unset_birthday_feeds
-from src.db.guild_settings import get_min_age, set_min_age
-from src.db.reddit_feeds import get_subscriptions, set_reddit_feed, unset_feeds
-from src.db.stats import add_stat_count
-from src.db.utils import (
-    get_closest_roles,
-    get_latest_links_for_roles,
-    get_random_link_for_each_role,
-    get_random_roles,
-)
-from src.llm_chat import get_llm_chat_response
-from src.reaction.gather import gather_dead_link, gather_reactions
-from src.reddit_feeds import update_reddit_feeds
-from src.discord_ui.bias_rater import (
-    LEADERBOARD_MAX_ENTRIES,
-    LEADERBOARD_PAGE_SIZE,
-    LeaderboardView,
-    VoteView,
-    build_group_leaderboard_embeds,
-    build_leaderboard_embeds,
-)
 from src.db.bias_rater import (
     cleanup_accumulating_tables,
     create_weekly_leaderboard_snapshots,
@@ -56,6 +35,28 @@ from src.db.bias_rater import (
     get_personal_leaderboard,
     has_completed_daily,
 )
+from src.db.birthday_feed import set_birthday_feed, unset_birthday_feeds
+from src.db.guild_settings import get_min_age, set_min_age
+from src.db.reddit_feeds import get_subscriptions, set_reddit_feed, unset_feeds
+from src.db.stats import add_stat_count
+from src.db.utils import (
+    get_closest_roles,
+    get_latest_links_for_roles,
+    get_random_link_for_each_role,
+    get_random_roles,
+)
+from src.discord_ui.bias_rater import (
+    LEADERBOARD_MAX_ENTRIES,
+    LEADERBOARD_PAGE_SIZE,
+    LeaderboardView,
+    VoteView,
+    build_group_leaderboard_embeds,
+    build_leaderboard_embeds,
+)
+from src.llm_chat import ChatMsg, generate_chat_response, HANNI_EMOJIS, OVERLOAD_MESSAGES
+from src.rate_limit import ChannelRateLimiter, Decision
+from src.reaction.gather import gather_dead_link, gather_reactions
+from src.reddit_feeds import update_reddit_feeds
 
 TOKEN = os.environ.get("TOKEN")
 OWNER_USER_ID = 1298088341241335841
@@ -848,27 +849,6 @@ class BiasRater(discord.app_commands.Group):
             await asyncio.to_thread(add_stat_count, "bias_autofeed")
 
 
-async def is_trigger_message(message):
-    # Ignore messages from the bot itself
-    if message.author == bot.user:
-        return False
-
-    # Check if bot is mentioned directly
-    if bot.user in message.mentions:
-        return True
-
-    # Check if message is a reply to the bot
-    if message.reference:
-        try:
-            # Fetch the referenced message
-            referenced_message = await message.channel.fetch_message(message.reference.message_id)
-            if referenced_message.author == bot.user:
-                return True
-        except:
-            pass
-    return False
-
-
 async def handle_owner_whisper(message: discord.Message) -> bool:
     # Usage: DM the bot with `whisper <channel_id> <message>`.
     if message.author.id != OWNER_USER_ID:
@@ -917,55 +897,90 @@ async def handle_owner_whisper(message: discord.Message) -> bool:
     return True
 
 
+def _to_chat_msg(message: discord.Message, is_trigger: bool = False) -> ChatMsg:
+    # Use raw content (not clean_content) so the model sees real `<@id>`
+    # mentions and `<:emoji:id>` codes instead of flattened display names.
+    return ChatMsg(
+        author_name=message.author.display_name,
+        author_id=message.author.id,
+        is_tsuki=message.author == bot.user,
+        content=message.content,
+        is_trigger=is_trigger,
+    )
+
+
+# Per-channel spam guard: a short burst of replies is fine, then it throttles to
+# ~1 reply / refill_seconds and posts a "slow down" notice at most once per window.
+_rate_limiter = ChannelRateLimiter(capacity=4, refill_seconds=15, notify_cooldown=30)
+
+
+async def handle_tsuki_chat(message: discord.Message) -> None:
+    channel = message.channel
+
+    # Per-channel rate limit; the owner is exempt so testing isn't throttled.
+    if message.author.id != OWNER_USER_ID:
+        decision = _rate_limiter.check(channel.id)
+        if decision is Decision.DENY_NOTIFY:
+            await channel.send(random.choice(OVERLOAD_MESSAGES))
+            return
+        if decision is Decision.DENY_SILENT:
+            return
+
+    try:
+        # Only the slow generation step shows the typing indicator. Sends happen
+        # after the context closes so "typing..." doesn't linger past the reply.
+        async with channel.typing():
+            # Recent history (chronological) followed by the triggering message.
+            history: list[discord.Message] = []
+            async for msg in channel.history(limit=30, before=message):
+                history.append(msg)
+            history.reverse()
+            history.append(message)
+
+            min_age = (
+                await asyncio.to_thread(get_min_age, message.guild.id)
+                if message.guild
+                else "18 year 1 month"
+            )
+
+            chat_msgs = [
+                _to_chat_msg(msg, is_trigger=(msg is message))
+                for msg in history
+                if msg.content.strip()
+            ]
+            result = await generate_chat_response(chat_msgs, min_age)
+
+        try:
+            await channel.send(
+                result.text or HANNI_EMOJIS["despair"],
+                allowed_mentions=discord.AllowedMentions(users=True, roles=False, everyone=False),
+            )
+            for url in result.attachments:
+                await channel.send(url)
+        except Exception as e:
+            raise RuntimeError(f"LLM completed but discord send failed: {e}")
+
+        await asyncio.to_thread(add_stat_count, "llm_response")
+    except Exception as e:
+        print(f"LLM chat error: {e}")
+        await channel.send(f"something happened inside me {HANNI_EMOJIS['despair']}\n{e}")
+
+
 @bot.event
 async def on_message(message: discord.Message):
     if message.author == bot.user:
         return
-    if not isinstance(message.channel, discord.DMChannel):
+
+    # Owner whisper handling happens over DM only.
+    if isinstance(message.channel, discord.DMChannel):
+        await handle_owner_whisper(message)
         return
-    if await handle_owner_whisper(message):
-        return
 
-
-# # Disabling for now until LLM and prompt and emoji stuff are all sorted out
-# @bot.event
-# async def on_message(message):
-#     if await is_trigger_message(message):
-#         try:
-#             channel = message.channel
-
-#             # Fetch message history (10 messages before the mentioned message)
-#             messages = []
-#             async for msg in channel.history(limit=20, before=message):
-#                 messages.append(msg)
-
-#             # Add the mentioned message to the list and reverse for chronological order
-#             messages.reverse()
-#             messages.append(message)
-
-#             # Format messages with display name and username
-#             formatted_messages = []
-#             for msg in messages:
-#                 if content := msg.clean_content:
-#                     formatted = f"{msg.author.display_name} (@{msg.author.name}): {content}"
-#                     formatted_messages.append(formatted)
-#             all_messages = "\n".join(formatted_messages)
-#             responses = get_llm_chat_response(all_messages)
-
-#             # Send each response separately
-#             for i, response in enumerate(responses):
-#                 message = await channel.send(response)
-#                 # Any response after the first one must be a content link so check if its broken
-#                 if i > 0:
-#                     await gather_dead_link(message, response)
-
-#             add_stat_count("llm_response")
-
-#         except Exception as e:
-#             await channel.send(f"Sorry, I encountered an error: {str(e)}")
-
-#     # Process other commands
-#     await bot.process_commands(message)
+    # Respond only to an explicit @mention in the message text. raw_mentions is
+    # parsed from the content, so it excludes the auto-ping Discord adds when
+    # someone merely replies to one of her messages.
+    if bot.user is not None and bot.user.id in message.raw_mentions:
+        await handle_tsuki_chat(message)
 
 
 bot.run(TOKEN)
