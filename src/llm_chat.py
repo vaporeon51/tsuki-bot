@@ -226,6 +226,10 @@ class ChatMsg:
     content: str
     # True for the single message that pinged the bot this turn.
     is_trigger: bool = False
+    # When this message is a reply, the author + content of the message it
+    # replies to, so the model can see the reply chain it would otherwise miss.
+    reply_to_author: str | None = None
+    reply_to_excerpt: str | None = None
 
 
 @dataclass
@@ -271,6 +275,23 @@ def _message_text(message: BaseMessage) -> str:
     return "".join(parts)
 
 
+def _reply_tag(msg: ChatMsg) -> str | None:
+    """A short '↪ replying to …' note for a message that replies to another.
+
+    Inlines a trimmed excerpt of the parent so the model sees the reply chain
+    even when the parent is older than the history window. Returns None when
+    the parent couldn't be resolved (deleted, uncached).
+    """
+    if msg.reply_to_author is None and msg.reply_to_excerpt is None:
+        return None
+    who = msg.reply_to_author or "someone"
+    # Collapse newlines/runs and strip foreign emoji so the snippet stays tidy.
+    excerpt = " ".join(_normalize_inbound(msg.reply_to_excerpt or "").split())
+    if len(excerpt) > 120:
+        excerpt = excerpt[:120].rstrip() + "…"
+    return f'replying to {who}: "{excerpt}"' if excerpt else f"replying to {who}"
+
+
 def _build_messages(history: list[ChatMsg]) -> list[BaseMessage]:
     messages: list[BaseMessage] = [SystemMessage(SYSTEM_PROMPT)]
     for msg in history:
@@ -286,10 +307,17 @@ def _build_messages(history: list[ChatMsg]) -> list[BaseMessage]:
             content = _normalize_inbound(msg.content).strip()
             if content:
                 label = f"{msg.author_name} (<@{msg.author_id}>)"
-                # Tag the invoking message so it stands out even when Gemini
-                # merges a run of consecutive messages into one turn.
+                # Tags stand out even when Gemini merges a run of consecutive
+                # messages into one turn: which message pinged her, and what
+                # any reply is replying to.
+                tags = []
                 if msg.is_trigger:
-                    label += " [↪ pinged you here]"
+                    tags.append("pinged you here")
+                reply_tag = _reply_tag(msg)
+                if reply_tag:
+                    tags.append(reply_tag)
+                if tags:
+                    label += f" [↪ {', '.join(tags)}]"
                 messages.append(HumanMessage(content=f"{label}: {content}"))
     return messages
 
