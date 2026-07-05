@@ -11,14 +11,14 @@ from src.config.constants import (
     UPVOTE_EMOTE,
 )
 
-from . import CONN_DICT
+from . import POOL
 
 RECENTLY_SENT_QUEUES = defaultdict(lambda: deque(maxlen=RECENTLY_SENT_QUEUE_SIZE))
 
 
 def get_closest_roles(query: str, min_age: str, count: int = 1) -> list[str] | None:
     """Get up to count closest role IDs to the query."""
-    with psycopg.connect(**CONN_DICT) as conn:
+    with POOL.connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """
@@ -68,7 +68,7 @@ def get_random_roles(count: int, min_age: str) -> list[str] | None:
         params += (count,)
     params += (min_age, count)
 
-    with psycopg.connect(**CONN_DICT) as conn:
+    with POOL.connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """
@@ -94,7 +94,7 @@ def get_latest_links_for_roles(
 ) -> list[tuple[str, str]] | None:
     """Get the latest links for role ids, or all roles if role ids are none."""
 
-    with psycopg.connect(**CONN_DICT) as conn:
+    with POOL.connection() as conn:
         with conn.cursor() as cur:
             base_query = """
                 WITH bday AS (
@@ -146,7 +146,7 @@ def get_random_link_for_each_role(
         else []
     )
 
-    with psycopg.connect(**CONN_DICT) as conn:
+    with POOL.connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """
@@ -217,7 +217,7 @@ def update_given_emote_counts(role_id: str, url: str, count_by_emoji: dict[str, 
     report_count = count_by_emoji[REPORT_EMOTE] - 1
 
     if upvote_count + report_count > 0:
-        with psycopg.connect(**CONN_DICT) as conn:
+        with POOL.connection() as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """
@@ -234,7 +234,7 @@ def update_given_emote_counts(role_id: str, url: str, count_by_emoji: dict[str, 
 
 def report_broken_link_url(url: str) -> None:
     """Given a broken URL, remove it from database by increasing its report count by threshold."""
-    with psycopg.connect(**CONN_DICT) as conn:
+    with POOL.connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """

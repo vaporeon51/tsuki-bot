@@ -183,10 +183,11 @@ async def on_ready():
     query="Idols and groups you want to include. Use `r` or `random` for random idol."
 )
 async def feed(interaction: discord.Interaction, query: str | None = None):
+    await interaction.response.defer(thinking=True)
     if not await asyncio.to_thread(has_completed_daily, interaction.user.id):
-        await interaction.response.send_message(
+        await interaction.edit_original_response(
+            content=
             f"Complete today's `/bias daily` before using feed! {TSUKI_NOM}",
-            ephemeral=True,
         )
         return
     min_age = await asyncio.to_thread(get_min_age, interaction.guild_id)
@@ -198,18 +199,18 @@ async def feed(interaction: discord.Interaction, query: str | None = None):
     if not role_ids:
         text = f"Could not find a role for `{query if query else 'random'}`. This message will disappear in 30s."
         print(text)
-        await interaction.response.send_message(text, delete_after=30)
+        await interaction.edit_original_response(content=text)
         return
 
     role_ids_and_urls = await asyncio.to_thread(get_random_link_for_each_role, role_ids, min_age)
     if not role_ids_and_urls:
         text = f"Could not find a content link for role id `{role_ids[0]}` given query `{query if query else 'random'}`. This message will disappear in 30s."
         print(text)
-        await interaction.response.send_message(text, delete_after=30)
+        await interaction.edit_original_response(content=text)
         return
 
     # Send the message and get the sent message
-    await interaction.response.send_message(role_ids_and_urls[0][1])
+    await interaction.edit_original_response(content=role_ids_and_urls[0][1])
     sent_message = await interaction.original_response()
 
     # React to the sent message with feedback emotes
@@ -240,15 +241,16 @@ async def latest(
     num_images: int = 5,
     skip: int = 0,
 ):
-    if not await asyncio.to_thread(has_completed_daily, interaction.user.id):
-        await interaction.response.send_message(
-            f"Complete today's `/bias daily` before using latest! {TSUKI_NOM}",
-            ephemeral=True,
-        )
-        return
     if num_images > 20:
         await interaction.response.send_message(
             "Cannot send more than 20 links at a time.", ephemeral=True
+        )
+        return
+
+    await interaction.response.defer(thinking=True)
+    if not await asyncio.to_thread(has_completed_daily, interaction.user.id):
+        await interaction.edit_original_response(
+            content=f"Complete today's `/bias daily` before using latest! {TSUKI_NOM}",
         )
         return
 
@@ -262,7 +264,7 @@ async def latest(
         if not role_ids:
             text = f"Could not find a role for `{query if query else 'random'}`. This message will disappear in 30s."
             print(text)
-            await interaction.response.send_message(text, delete_after=30)
+            await interaction.edit_original_response(content=text)
             return
         role_ids_and_urls = await asyncio.to_thread(
             get_latest_links_for_roles,
@@ -273,14 +275,12 @@ async def latest(
         )
 
     if not role_ids_and_urls:
-        await interaction.response.send_message(
-            "Could not find any content with these inputs.", ephemeral=True
-        )
+        await interaction.edit_original_response(content="Could not find any content with these inputs.")
         return
 
     text = f"Fetched latest `{len(role_ids_and_urls)}` images of `{query if query else 'all'}` after skipping first `{skip}` {TSUKI_NOM}"
     try:
-        await interaction.response.send_message(content=text)
+        await interaction.edit_original_response(content=text)
     except Exception as e:
         print(e)
         return
@@ -313,12 +313,6 @@ async def autofeed(
     interval: int = 20,
     count: int = 5,
 ):
-    if not await asyncio.to_thread(has_completed_daily, interaction.user.id):
-        await interaction.response.send_message(
-            f"Complete today's `/bias daily` before using autofeed! {TSUKI_NOM}",
-            ephemeral=True,
-        )
-        return
     if interval < 2 or interval > 60 * 60 * 24:
         await interaction.response.send_message(
             f"Interval must be between 2 seconds and 24 hours ({60 * 60 * 24}).",
@@ -327,6 +321,12 @@ async def autofeed(
         return
     if count > 120:
         await interaction.response.send_message("Count cannot be more than 120", ephemeral=True)
+        return
+    await interaction.response.defer(thinking=True)
+    if not await asyncio.to_thread(has_completed_daily, interaction.user.id):
+        await interaction.edit_original_response(
+            content=f"Complete today's `/bias daily` before using autofeed! {TSUKI_NOM}",
+        )
         return
     guild_id = interaction.guild_id
     command_name = "autofeed"
@@ -347,7 +347,8 @@ async def autofeed(
 async def autofeed_command(
     interaction: discord.Interaction, query: str | None, interval: int, count: int
 ):
-    await interaction.response.defer(thinking=True)
+    if not interaction.response.is_done():
+        await interaction.response.defer(thinking=True)
     min_age = await asyncio.to_thread(get_min_age, interaction.guild_id)
     if query in [None, "r", "random"]:
         role_ids = await asyncio.to_thread(get_random_roles, count, min_age)
@@ -430,7 +431,8 @@ async def perform_autofeed_critical_operations(
 async def bias_autofeed_command(
     interaction: discord.Interaction, scope: str, interval: int, count: int
 ):
-    await interaction.response.defer(thinking=True)
+    if not interaction.response.is_done():
+        await interaction.response.defer(thinking=True)
     min_age = await asyncio.to_thread(get_min_age, interaction.guild_id)
 
     if scope == "global":

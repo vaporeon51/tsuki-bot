@@ -3,7 +3,7 @@ from datetime import datetime
 
 import psycopg
 
-from . import CONN_DICT
+from . import POOL
 
 
 @dataclass
@@ -31,7 +31,7 @@ class ContentLink:
 
 
 def get_latest_message_id() -> tuple[datetime, str]:
-    with psycopg.connect(**CONN_DICT) as conn:
+    with POOL.connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """
@@ -48,7 +48,7 @@ def get_latest_message_id() -> tuple[datetime, str]:
 
 
 def get_role_ids() -> list[str]:
-    with psycopg.connect(**CONN_DICT) as conn:
+    with POOL.connection() as conn:
         with conn.cursor() as cur:
             cur.execute("SELECT role_id FROM role_info")
             result = cur.fetchall()
@@ -59,7 +59,7 @@ def get_role_ids() -> list[str]:
 def upsert_content_links_and_update_logs(
     processed_date: datetime, last_message_id: str, new_links: list[ContentLink]
 ) -> None:
-    with psycopg.connect(**CONN_DICT) as conn:
+    with POOL.connection() as conn:
         with conn.cursor() as cur:
             try:
                 # Upsert content links

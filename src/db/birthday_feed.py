@@ -2,11 +2,11 @@ from datetime import datetime, timedelta, timezone
 
 import psycopg
 
-from . import CONN_DICT
+from . import POOL
 
 
 def set_birthday_feed(guild_id: int, channel_id: int) -> None:
-    with psycopg.connect(**CONN_DICT) as conn:
+    with POOL.connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """
@@ -19,7 +19,7 @@ def set_birthday_feed(guild_id: int, channel_id: int) -> None:
 
 
 def get_birthday_feeds() -> tuple[int, int]:
-    with psycopg.connect(**CONN_DICT) as conn:
+    with POOL.connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """
@@ -32,7 +32,7 @@ def get_birthday_feeds() -> tuple[int, int]:
 
 
 def unset_birthday_feeds(guild_id: int) -> None:
-    with psycopg.connect(**CONN_DICT) as conn:
+    with POOL.connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """
@@ -45,7 +45,7 @@ def unset_birthday_feeds(guild_id: int) -> None:
 
 def log_message(guild_id: int, channel_id: int, role_id: str) -> None:
     post_datetime = datetime.now(timezone.utc)
-    with psycopg.connect(**CONN_DICT) as conn:
+    with POOL.connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """
@@ -59,7 +59,7 @@ def log_message(guild_id: int, channel_id: int, role_id: str) -> None:
 def get_recent_messages() -> list[tuple[int, int]]:
     # Check the last 2 days for relevant posts
     date_cutoff = datetime.now(timezone.utc) - timedelta(days=2)
-    with psycopg.connect(**CONN_DICT) as conn:
+    with POOL.connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """
@@ -90,7 +90,7 @@ def get_recent_birthdays() -> list[tuple[str, str, str]]:
     # Calculate the cutoff year for age 19
     cutoff_year = now.year - 19
 
-    with psycopg.connect(**CONN_DICT) as conn:
+    with POOL.connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """
