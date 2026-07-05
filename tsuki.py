@@ -161,6 +161,11 @@ async def on_ready():
     for server in bot.guilds:
         try:
             owner = server.owner or bot.get_user(server.owner_id)
+            if not owner:
+                try:
+                    owner = await bot.fetch_user(server.owner_id)
+                except Exception:
+                    pass
             owner_name = owner.name if owner else f"Unknown ({server.owner_id})"
             print(
                 "Server name:",
