@@ -225,9 +225,7 @@ def build_leaderboard_embeds(
     return embeds
 
 
-def _format_rank_movement(
-    current_rank: int, previous_rank: int | None, leaderboard: Leaderboard
-) -> str:
+def _format_rank_movement(current_rank: int, previous_rank: int | None, leaderboard: Leaderboard) -> str:
     if leaderboard.movement_baseline_date is None:
         return ""
     if previous_rank is None:
@@ -296,9 +294,7 @@ class LeaderboardView(discord.ui.View):
         await self._set_page(interaction, 2)
 
 
-def build_group_leaderboard_embeds(
-    title: str, leaderboard: GroupLeaderboard
-) -> list[discord.Embed]:
+def build_group_leaderboard_embeds(title: str, leaderboard: GroupLeaderboard) -> list[discord.Embed]:
     """Header embed with ranked groups + #1 image, plus gallery embeds for #2 and #3."""
     medals = {1: "🥇", 2: "🥈", 3: "🥉"}
 
@@ -436,9 +432,7 @@ class VoteView(discord.ui.View):
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.user_id:
-            await interaction.response.send_message(
-                "This is not your voting session!", ephemeral=True
-            )
+            await interaction.response.send_message("This is not your voting session!", ephemeral=True)
             return False
 
         if getattr(self, "_answered", False):

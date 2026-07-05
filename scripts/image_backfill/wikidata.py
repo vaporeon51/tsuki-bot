@@ -83,11 +83,7 @@ def candidate_names(binding: dict) -> list[str]:
 def main() -> int:
     default_in = Path(__file__).parent / "role_info.csv"
     in_path = Path(sys.argv[1]) if len(sys.argv) > 1 else default_in
-    out_path = (
-        Path(sys.argv[2])
-        if len(sys.argv) > 2
-        else in_path.with_name(in_path.stem + "_wikidata.csv")
-    )
+    out_path = Path(sys.argv[2]) if len(sys.argv) > 2 else in_path.with_name(in_path.stem + "_wikidata.csv")
 
     with in_path.open() as f:
         rows = list(csv.DictReader(f))
@@ -121,10 +117,7 @@ def main() -> int:
                 image_lookup[(ng, norm(name))] = image_url
             per_group_hits[group_name] += 1
 
-        print(
-            f"  {group_name}: {len(members_seen)} member records, "
-            f"{per_group_hits[group_name]} with images"
-        )
+        print(f"  {group_name}: {len(members_seen)} member records, " f"{per_group_hits[group_name]} with images")
         time.sleep(0.3)  # be polite to the Wikidata endpoint
 
     # Match back to CSV rows, only filling blanks.

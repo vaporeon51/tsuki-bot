@@ -5,12 +5,7 @@ from datetime import datetime
 import requests
 from dateutil import parser
 
-from src.db.content_update import (
-    ContentLink,
-    get_latest_message_id,
-    get_role_ids,
-    upsert_content_links_and_update_logs,
-)
+from src.db.content_update import ContentLink, get_latest_message_id, get_role_ids, upsert_content_links_and_update_logs
 
 KPF_CHANNEL_ID = "124767749099618304"
 USER_AUTH = os.environ["USER_AUTH"]
@@ -27,9 +22,7 @@ def get_latest_messages(after_message_id: str) -> list[dict]:
     return resp.json()
 
 
-def process_message(
-    message_json: dict, valid_roles: list[str], processed_date: datetime
-) -> list[ContentLink]:
+def process_message(message_json: dict, valid_roles: list[str], processed_date: datetime) -> list[ContentLink]:
     """Processes an individual message json into content links"""
 
     # If there are no ping roles or relevant roles then return
@@ -104,8 +97,6 @@ async def run_content_links_update() -> None:
 
     # Bulk upsert the new content links and update log
     if new_links:
-        await asyncio.to_thread(
-            upsert_content_links_and_update_logs, processed_date, last_message_id, new_links
-        )
+        await asyncio.to_thread(upsert_content_links_and_update_logs, processed_date, last_message_id, new_links)
 
     print("Completed content updates.")

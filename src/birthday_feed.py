@@ -1,4 +1,5 @@
 import asyncio
+
 from discord.ext import commands
 
 from src.db.birthday_feed import get_birthday_feeds, get_recent_birthdays, get_recent_messages, log_message
@@ -27,8 +28,7 @@ async def update_birthday_feeds(bot: commands.Bot) -> None:
                 # Format the birthday message
                 message = f"# 🎉 Happy Birthday, {member_name}! 🎂"
                 role_links = await asyncio.to_thread(
-                    get_random_link_for_each_role,
-                    [role_id], "18 year", use_recently_sent_queue=False
+                    get_random_link_for_each_role, [role_id], "18 year", use_recently_sent_queue=False
                 )
                 if not role_links:
                     continue

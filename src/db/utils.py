@@ -141,9 +141,7 @@ def get_random_link_for_each_role(
         return None
 
     recently_sent_queue = (
-        [item for role in role_ids for item in RECENTLY_SENT_QUEUES[role]]
-        if use_recently_sent_queue
-        else []
+        [item for role in role_ids for item in RECENTLY_SENT_QUEUES[role]] if use_recently_sent_queue else []
     )
 
     with POOL.connection() as conn:
