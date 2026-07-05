@@ -132,13 +132,19 @@ def get_latest_links_for_roles(
             return result
 
 
-def get_random_link_for_each_role(role_ids: list[str], min_age: str) -> list[tuple[str, str]] | None:
+def get_random_link_for_each_role(
+    role_ids: list[str], min_age: str, *, use_recently_sent_queue: bool = True
+) -> list[tuple[str, str]] | None:
     """Get a random content link given a role id."""
 
     if role_ids is None or len(role_ids) == 0:
         return None
 
-    recently_sent_queue = [item for role in role_ids for item in RECENTLY_SENT_QUEUES[role]]
+    recently_sent_queue = (
+        [item for role in role_ids for item in RECENTLY_SENT_QUEUES[role]]
+        if use_recently_sent_queue
+        else []
+    )
 
     with psycopg.connect(**CONN_DICT) as conn:
         with conn.cursor() as cur:
@@ -157,7 +163,7 @@ def get_random_link_for_each_role(role_ids: list[str], min_age: str) -> list[tup
                     FROM bday
                     JOIN content_links cl ON bday.role_id = cl.role_id
                     WHERE cl.num_reports < %s
-                    AND cl.url != ALL(%s)
+                    AND (%s OR cl.url != ALL(%s))
                     AND cl.uploaded_date > bday.birthday + %s::INTERVAL
                 )
 
@@ -173,6 +179,7 @@ def get_random_link_for_each_role(role_ids: list[str], min_age: str) -> list[tup
                     INITIAL_REACT_CAP,
                     SAMPLING_EXPONENT,
                     REPORT_THRESHOLD,
+                    not use_recently_sent_queue,
                     recently_sent_queue,
                     min_age,
                     role_ids,
@@ -182,11 +189,12 @@ def get_random_link_for_each_role(role_ids: list[str], min_age: str) -> list[tup
             result = cur.fetchall()
 
             if not result:
-                for id in role_ids:
-                    RECENTLY_SENT_QUEUES[id].clear()
-                    return None
+                if use_recently_sent_queue:
+                    for id in role_ids:
+                        RECENTLY_SENT_QUEUES[id].clear()
+                return None
 
-            if len(result) < len(role_ids):
+            if use_recently_sent_queue and len(result) < len(role_ids):
                 role_ids_set = set(role_ids)
                 gathered_role_ids_set = set([row[0] for row in result])
 
@@ -195,8 +203,9 @@ def get_random_link_for_each_role(role_ids: list[str], min_age: str) -> list[tup
                 for id in missing_roles:
                     RECENTLY_SENT_QUEUES[id].clear()
 
-            for role, url in result:
-                RECENTLY_SENT_QUEUES[role].append(url)
+            if use_recently_sent_queue:
+                for role, url in result:
+                    RECENTLY_SENT_QUEUES[role].append(url)
             return result
 
 
