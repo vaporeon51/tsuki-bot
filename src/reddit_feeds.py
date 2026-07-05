@@ -1,3 +1,4 @@
+import asyncio
 import io
 import os
 from dataclasses import dataclass
@@ -123,14 +124,17 @@ def get_image_files(urls: list[str]) -> list[discord.File]:
     """Download reddit images and turn them into discord file attachments."""
     results = []
     for url in urls[:REDDIT_MAX_ATTACHMENTS]:
-        response = requests.get(url)
-        if response.status_code == 200:
-            image_data = io.BytesIO(response.content)
-            parsed_url = urlparse(url)
-            filename = parsed_url.path.split("/")[-1]
-            results.append(discord.File(fp=image_data, filename=filename))
-        else:
-            print(f"Failed to get url: {url}. Response: {response.json()}")
+        try:
+            response = requests.get(url, timeout=10)
+            if response.status_code == 200:
+                image_data = io.BytesIO(response.content)
+                parsed_url = urlparse(url)
+                filename = parsed_url.path.split("/")[-1]
+                results.append(discord.File(fp=image_data, filename=filename))
+            else:
+                print(f"Failed to get url: {url}. Status: {response.status_code}")
+        except Exception as e:
+            print(f"Error fetching URL {url}: {e}")
     return results
 
 
@@ -178,7 +182,7 @@ async def update_reddit_feeds(bot: commands.Bot, lookback_secs: int) -> None:
 
     print("Updating reddit feeds...")
     curr_time = datetime.now(timezone.utc).timestamp()
-    feed_configs = get_feed_configs()
+    feed_configs = await asyncio.to_thread(get_feed_configs)
     num_new_posts = {}
     try:
         all_subreddits = set(subreddit for _, _, subreddit in feed_configs)
@@ -187,7 +191,7 @@ async def update_reddit_feeds(bot: commands.Bot, lookback_secs: int) -> None:
         for subreddit in all_subreddits:
             fetch_result = await get_and_parse_posts(subreddit)
             if fetch_result.should_unsubscribe:
-                deleted_count = unset_subreddit_feeds(subreddit)
+                deleted_count = await asyncio.to_thread(unset_subreddit_feeds, subreddit)
                 print(f"Removed {deleted_count} reddit feed subscriptions for unrecoverable subreddit: {subreddit}")
                 continue
 
@@ -207,7 +211,7 @@ async def update_reddit_feeds(bot: commands.Bot, lookback_secs: int) -> None:
                     for post in posts_by_subreddit.get(subreddit, []):
                         text = f"[r/{subreddit}] **{post.title}**"
                         if post.is_gallery:
-                            images = get_image_files(post.media_urls)
+                            images = await asyncio.to_thread(get_image_files, post.media_urls)
                             await channel.send(text, files=images)
                         else:
                             await channel.send(text)

@@ -18,7 +18,7 @@ def set_birthday_feed(guild_id: int, channel_id: int) -> None:
             )
 
 
-def get_birthday_feeds() -> tuple[int, int]:
+def get_birthday_feeds() -> list[tuple[int, int]]:
     with POOL.connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -56,7 +56,7 @@ def log_message(guild_id: int, channel_id: int, role_id: str) -> None:
             )
 
 
-def get_recent_messages() -> list[tuple[int, int]]:
+def get_recent_messages() -> list[tuple[int, int, str]]:
     # Check the last 2 days for relevant posts
     date_cutoff = datetime.now(timezone.utc) - timedelta(days=2)
     with POOL.connection() as conn:

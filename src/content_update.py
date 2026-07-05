@@ -22,6 +22,7 @@ def get_latest_messages(after_message_id: str) -> list[dict]:
     resp = requests.get(
         f"https://discord.com/api/v9/channels/{KPF_CHANNEL_ID}/messages?limit=100&after={after_message_id}",
         headers=headers,
+        timeout=10,
     )
     return resp.json()
 
@@ -77,16 +78,18 @@ async def run_content_links_update() -> None:
 
     print("Starting content update...")
     processed_date = datetime.now()
-    last_message_id = get_latest_message_id()
+    last_message_id = await asyncio.to_thread(get_latest_message_id)
     new_links = []
 
     # Fetch relevant role ids
-    role_ids = get_role_ids()
+    role_ids = await asyncio.to_thread(get_role_ids)
 
     # Continuous fetch messages until there are none left
-    while new_messages := sorted(
-        get_latest_messages(last_message_id), key=lambda x: x["timestamp"]
-    ):
+    while True:
+        new_messages = await asyncio.to_thread(get_latest_messages, last_message_id)
+        if not new_messages:
+            break
+        new_messages = sorted(new_messages, key=lambda x: x["timestamp"])
         for message in new_messages:
             try:
                 if content_links := process_message(message, role_ids, processed_date):
@@ -101,6 +104,8 @@ async def run_content_links_update() -> None:
 
     # Bulk upsert the new content links and update log
     if new_links:
-        upsert_content_links_and_update_logs(processed_date, last_message_id, new_links)
+        await asyncio.to_thread(
+            upsert_content_links_and_update_logs, processed_date, last_message_id, new_links
+        )
 
     print("Completed content updates.")
