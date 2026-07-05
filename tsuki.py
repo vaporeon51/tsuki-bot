@@ -75,11 +75,25 @@ class TsukiBot(commands.Bot):
         self.active_commands: dict[int, dict[str, list[asyncio.Task]]] = {}
 
     async def setup_hook(self):
+        # Open database connection pool
+        from src.db import POOL
+        await asyncio.to_thread(POOL.open)
+
         self.tree.add_command(Admin())
         self.tree.add_command(BirthdayFeed())
         self.tree.add_command(RedditFeed())
         self.tree.add_command(BiasRater())
         asyncio.create_task(self.custom_event_handler())
+
+    async def close(self):
+        # Close database connection pool
+        from src.db import POOL
+        try:
+            await asyncio.to_thread(POOL.close)
+            print("Successfully closed database connection pool.")
+        except Exception as e:
+            print(f"Error closing DB pool: {e}")
+        await super().close()
 
     async def custom_event_handler(self):
         while True:
