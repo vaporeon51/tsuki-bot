@@ -42,6 +42,7 @@ from src.discord_ui.bias_rater import (
     build_group_leaderboard_embeds,
     build_leaderboard_embeds,
 )
+from src.discord_ui.wheel import render_wheel
 from src.llm_chat import HANNI_EMOJIS, OVERLOAD_MESSAGES, ChatMsg, generate_chat_response
 from src.rate_limit import ChannelRateLimiter, Decision
 from src.reaction.gather import gather_dead_link, gather_reactions
@@ -102,6 +103,41 @@ bot = TsukiBot()
 def start_loop_once(loop: tasks.Loop) -> None:
     if not loop.is_running():
         loop.start()
+
+
+@bot.tree.command(name="wheel", description="Spin a wheel from your top personal bias rankings.")
+@discord.app_commands.describe(top_n="How many of your top idols to include (default: 10; 2–16)")
+async def wheel(interaction: discord.Interaction, top_n: discord.app_commands.Range[int, 2, 16] = 10):
+    """Render a short wheel spin and choose uniformly from the user's top N idols."""
+    await interaction.response.defer(thinking=True)
+    leaderboard = await asyncio.to_thread(get_personal_leaderboard, interaction.user.id, top_n)
+    entries = leaderboard.entries
+    if len(entries) < 2:
+        await interaction.edit_original_response(
+            content="You need at least two idols in your personal leaderboard before spinning the wheel! Use '/bias vote' or '/bias daily' to get started!"
+        )
+        return
+
+    try:
+        result = await asyncio.to_thread(render_wheel, entries)
+    except Exception as exc:
+        print(f"Bias wheel rendering error: {exc}")
+        await interaction.edit_original_response(content="I couldn't spin the bias wheel right now. Please try again!")
+        return
+
+    file = discord.File(result.gif, filename="bias-wheel.gif")
+    embed = discord.Embed(
+        title="🎡 Bias Wheel",
+        description=(
+            f"It landed on **{result.winner.member_name}** "
+            f"from **{result.winner.group_name}**!"
+        ),
+        color=discord.Color.gold(),
+    )
+    embed.set_image(url="attachment://bias-wheel.gif")
+    embed.set_footer(text=f"Randomly selected from your top {len(entries)} personal biases")
+    await interaction.edit_original_response(embed=embed, attachments=[file])
+    await asyncio.to_thread(add_stat_count, "bias_wheel")
 
 
 @tasks.loop(seconds=60 * 60 * 12)
