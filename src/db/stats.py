@@ -1,10 +1,10 @@
 import psycopg
 
-from . import CONN_DICT
+from . import POOL
 
 
 def add_stat_count(stat: str, value: int = 1) -> None:
-    with psycopg.connect(**CONN_DICT) as conn:
+    with POOL.connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """

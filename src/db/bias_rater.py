@@ -5,7 +5,7 @@ from typing import Tuple
 
 import psycopg
 
-from . import CONN_DICT
+from . import POOL
 
 _KST = datetime.timezone(datetime.timedelta(hours=9))
 
@@ -25,8 +25,7 @@ def _week_start_kst(date: datetime.date | None = None) -> datetime.date:
 # Only idols with both a member name and an image_url participate in matchups/leaderboards.
 # All queries alias role_info as `r` so this predicate is reusable without string surgery.
 _ACTIVE_IDOL_PREDICATE = (
-    "r.member_name IS NOT NULL AND TRIM(r.member_name) != '' "
-    "AND r.image_url IS NOT NULL AND TRIM(r.image_url) != ''"
+    "r.member_name IS NOT NULL AND TRIM(r.member_name) != '' " "AND r.image_url IS NOT NULL AND TRIM(r.image_url) != ''"
 )
 
 # Rank-based sampling exponent for the first pick in get_matchup (weight ∝ 1/rank^α).
@@ -91,7 +90,7 @@ def get_matchup(user_id: int) -> list[tuple[str, str, str, int, str]] | None:
     Only selects idols that have a non-empty member_name.
     Returns: list of 2 tuples (role_id, member_name, group_name, personal_elo, image_url)
     """
-    with psycopg.connect(**CONN_DICT) as conn:
+    with POOL.connection() as conn:
         with conn.cursor() as cur:
             # 1. Pick the first idol via rank-weighted sampling (Efraimidis-Spirakis /
             # Gumbel-trick) on personal ELO. weight ∝ 1/rank^α so the user's higher-ELO
@@ -151,16 +150,14 @@ def get_matchup(user_id: int) -> list[tuple[str, str, str, int, str]] | None:
             return matchup
 
 
-def record_vote(
-    user_id: int, guild_id: int, winner_id: str, loser_id: str
-) -> tuple[int, int, int, int, int, int]:
+def record_vote(user_id: int, guild_id: int, winner_id: str, loser_id: str) -> tuple[int, int, int, int, int, int]:
     """
     Records a vote and updates global, guild, and personal ELO and counters.
     Returns (global_winner_delta, global_loser_delta,
              guild_winner_delta, guild_loser_delta,
              personal_winner_delta, personal_loser_delta).
     """
-    with psycopg.connect(**CONN_DICT) as conn:
+    with POOL.connection() as conn:
         with conn.cursor() as cur:
             # 1. Ensure per-user and per-guild rows exist (default 1200)
             cur.execute(
@@ -347,7 +344,7 @@ def _build_group_leaderboard(rows, vote_count, top_n: int) -> GroupLeaderboard:
 
 def get_global_leaderboard(limit: int = 15) -> Leaderboard:
     """Returns top idols by global ELO plus the global vote count."""
-    with psycopg.connect(**CONN_DICT) as conn:
+    with POOL.connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """
@@ -396,7 +393,7 @@ def get_global_leaderboard(limit: int = 15) -> Leaderboard:
 
 def get_global_group_leaderboard(limit: int = 15, top_n: int = 3) -> GroupLeaderboard:
     """Returns top groups by average global ELO of their top N active members."""
-    with psycopg.connect(**CONN_DICT) as conn:
+    with POOL.connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """
@@ -442,7 +439,7 @@ def get_global_group_leaderboard(limit: int = 15, top_n: int = 3) -> GroupLeader
 
 def get_guild_leaderboard(guild_id: int, limit: int = 15) -> Leaderboard:
     """Returns top idols by guild ELO for a server plus the server vote count."""
-    with psycopg.connect(**CONN_DICT) as conn:
+    with POOL.connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """
@@ -494,7 +491,7 @@ def get_guild_leaderboard(guild_id: int, limit: int = 15) -> Leaderboard:
 
 def get_guild_group_leaderboard(guild_id: int, limit: int = 15, top_n: int = 3) -> GroupLeaderboard:
     """Returns top groups by average guild ELO of their top N voted active members."""
-    with psycopg.connect(**CONN_DICT) as conn:
+    with POOL.connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """
@@ -544,7 +541,7 @@ def get_guild_group_leaderboard(guild_id: int, limit: int = 15, top_n: int = 3) 
 
 def get_personal_leaderboard(user_id: int, limit: int = 15) -> Leaderboard:
     """Returns top idols by personal ELO for a user plus the personal vote count."""
-    with psycopg.connect(**CONN_DICT) as conn:
+    with POOL.connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """
@@ -594,11 +591,9 @@ def get_personal_leaderboard(user_id: int, limit: int = 15) -> Leaderboard:
             return _build_leaderboard(cur.fetchall(), vote_count)
 
 
-def get_personal_group_leaderboard(
-    user_id: int, limit: int = 15, top_n: int = 3
-) -> GroupLeaderboard:
+def get_personal_group_leaderboard(user_id: int, limit: int = 15, top_n: int = 3) -> GroupLeaderboard:
     """Returns top groups by average personal ELO of their top N voted active members."""
-    with psycopg.connect(**CONN_DICT) as conn:
+    with POOL.connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """
@@ -667,7 +662,7 @@ def get_daily_idols(
     if date is None:
         date = _today_kst()
 
-    with psycopg.connect(**CONN_DICT) as conn:
+    with POOL.connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 f"""
@@ -690,7 +685,7 @@ def get_daily_idols(
 def has_completed_daily(user_id: int, date: datetime.date | None = None) -> bool:
     if date is None:
         date = _today_kst()
-    with psycopg.connect(**CONN_DICT) as conn:
+    with POOL.connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """
@@ -705,7 +700,7 @@ def has_completed_daily(user_id: int, date: datetime.date | None = None) -> bool
 def record_daily_completion(user_id: int, date: datetime.date | None = None) -> None:
     if date is None:
         date = _today_kst()
-    with psycopg.connect(**CONN_DICT) as conn:
+    with POOL.connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """
@@ -795,15 +790,11 @@ def _insert_snapshot_if_changed(
     was inserted. If this week already has a snapshot, or the current top list
     matches the previous stored snapshot, no rows are written.
     """
-    if not rows or _scope_has_snapshot(
-        cur, scope_type, scope_id, snapshot_period, snapshot_date
-    ):
+    if not rows or _scope_has_snapshot(cur, scope_type, scope_id, snapshot_period, snapshot_date):
         return False
 
     current = [(role_id, rank, elo) for role_id, rank, elo, _ in rows]
-    previous = _fetch_latest_snapshot_rows(
-        cur, scope_type, scope_id, snapshot_period, snapshot_date
-    )
+    previous = _fetch_latest_snapshot_rows(cur, scope_type, scope_id, snapshot_period, snapshot_date)
     if previous == current:
         return False
 
@@ -865,9 +856,7 @@ def _fetch_global_snapshot_rows(cur, limit: int) -> list[tuple[str, int, int, in
     return cur.fetchall()
 
 
-def _fetch_guild_snapshot_rows(
-    cur, guild_id: int, limit: int
-) -> list[tuple[str, int, int, int]]:
+def _fetch_guild_snapshot_rows(cur, guild_id: int, limit: int) -> list[tuple[str, int, int, int]]:
     cur.execute(
         f"""
         WITH ranked AS (
@@ -896,9 +885,7 @@ def _fetch_guild_snapshot_rows(
     return cur.fetchall()
 
 
-def _fetch_personal_snapshot_rows(
-    cur, user_id: int, limit: int
-) -> list[tuple[str, int, int, int]]:
+def _fetch_personal_snapshot_rows(cur, user_id: int, limit: int) -> list[tuple[str, int, int, int]]:
     cur.execute(
         f"""
         WITH ranked AS (
@@ -941,7 +928,7 @@ def create_weekly_leaderboard_snapshots(
     snapshot_period = "weekly"
     inserted = {"global": 0, "guild": 0, "personal": 0}
 
-    with psycopg.connect(**CONN_DICT) as conn:
+    with POOL.connection() as conn:
         with conn.cursor() as cur:
             if _insert_snapshot_if_changed(
                 cur,
@@ -1009,7 +996,7 @@ def cleanup_accumulating_tables(
     daily_cutoff = _today_kst() - datetime.timedelta(days=daily_completion_retention_days)
 
     deleted: dict[str, int] = {}
-    with psycopg.connect(**CONN_DICT) as conn:
+    with POOL.connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """

@@ -374,14 +374,9 @@ async def generate_chat_response(history: list[ChatMsg], min_age: str) -> ChatRe
     # Happy path: the search found something and her reply is already in call 1,
     # so we're done in a single call. Only re-invoke when a search failed.
     if not any_failed:
-        text = (
-            _restore_emoji_codes(_message_text(ai).strip())
-            or f"here you go !! {HANNI_EMOJIS['giggling']}"
-        )
+        text = _restore_emoji_codes(_message_text(ai).strip()) or f"here you go !! {HANNI_EMOJIS['giggling']}"
         return ChatResult(text=text, attachments=attachments)
 
     follow_up = await _ainvoke(messages)
-    text = _restore_emoji_codes(_message_text(follow_up).strip()) or _restore_emoji_codes(
-        _message_text(ai).strip()
-    )
+    text = _restore_emoji_codes(_message_text(follow_up).strip()) or _restore_emoji_codes(_message_text(ai).strip())
     return ChatResult(text=text, attachments=attachments)

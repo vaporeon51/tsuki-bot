@@ -3,14 +3,14 @@ import psycopg
 from src.config.constants import GUILD_SETTINGS_CACHE_SIZE
 from src.utils import LRUCache
 
-from . import CONN_DICT
+from . import POOL
 
 DEFAULT_INTERVAL = "18 year 1 month"
 GUILD_SETTINGS_CACHE = LRUCache(capacity=GUILD_SETTINGS_CACHE_SIZE)
 
 
 def set_min_age(guild_id: int, min_age: int) -> None:
-    with psycopg.connect(**CONN_DICT) as conn:
+    with POOL.connection() as conn:
         with conn.cursor() as cur:
             cur.execute(f"SELECT NOW() + interval '{min_age}';")
             cur.execute(
@@ -28,7 +28,7 @@ def set_min_age(guild_id: int, min_age: int) -> None:
 def get_min_age(guild_id: int) -> str:
     if min_age := GUILD_SETTINGS_CACHE.get(guild_id):
         return min_age
-    with psycopg.connect(**CONN_DICT) as conn:
+    with POOL.connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """

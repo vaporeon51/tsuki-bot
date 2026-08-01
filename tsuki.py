@@ -16,13 +16,7 @@ IS_DEV = os.environ.get("IS_DEV", "false") == "true"
 from src.birthday_feed import update_birthday_feeds
 
 # Local imports after dotenv to ensure environment variables are available
-from src.config.constants import (
-    REDDIT_FEED_WINDOW,
-    REPORT_EMOTE,
-    TSUKI_HARAM_HUG,
-    TSUKI_NOM,
-    UPVOTE_EMOTE,
-)
+from src.config.constants import REDDIT_FEED_WINDOW, REPORT_EMOTE, TSUKI_HARAM_HUG, TSUKI_NOM, UPVOTE_EMOTE
 from src.content_update import run_content_links_update
 from src.db.bias_rater import (
     cleanup_accumulating_tables,
@@ -39,12 +33,7 @@ from src.db.birthday_feed import set_birthday_feed, unset_birthday_feeds
 from src.db.guild_settings import get_min_age, set_min_age
 from src.db.reddit_feeds import get_subscriptions, set_reddit_feed, unset_feeds
 from src.db.stats import add_stat_count
-from src.db.utils import (
-    get_closest_roles,
-    get_latest_links_for_roles,
-    get_random_link_for_each_role,
-    get_random_roles,
-)
+from src.db.utils import get_closest_roles, get_latest_links_for_roles, get_random_link_for_each_role, get_random_roles
 from src.discord_ui.bias_rater import (
     LEADERBOARD_MAX_ENTRIES,
     LEADERBOARD_PAGE_SIZE,
@@ -53,7 +42,7 @@ from src.discord_ui.bias_rater import (
     build_group_leaderboard_embeds,
     build_leaderboard_embeds,
 )
-from src.llm_chat import ChatMsg, generate_chat_response, HANNI_EMOJIS, OVERLOAD_MESSAGES
+from src.llm_chat import HANNI_EMOJIS, OVERLOAD_MESSAGES, ChatMsg, generate_chat_response
 from src.rate_limit import ChannelRateLimiter, Decision
 from src.reaction.gather import gather_dead_link, gather_reactions
 from src.reddit_feeds import update_reddit_feeds
@@ -61,24 +50,39 @@ from src.reddit_feeds import update_reddit_feeds
 TOKEN = os.environ.get("TOKEN")
 OWNER_USER_ID = 1298088341241335841
 OWNER_WHISPER_PREFIX = "whisper "
+_background_tasks = set()
 
 
 class TsukiBot(commands.Bot):
     def __init__(self):
         intents = discord.Intents.default()
         intents.message_content = True
-        super().__init__(
-            intents=intents, command_prefix="['/tsuki', '/tk', '!']", help_command=None
-        )
+        super().__init__(intents=intents, command_prefix="['/tsuki', '/tk', '!']", help_command=None)
         self.custom_event_queue = asyncio.Queue()
         self.active_commands: dict[int, dict[str, list[asyncio.Task]]] = {}
 
     async def setup_hook(self):
+        # Open database connection pool
+        from src.db import POOL
+
+        await asyncio.to_thread(POOL.open)
+
         self.tree.add_command(Admin())
         self.tree.add_command(BirthdayFeed())
         self.tree.add_command(RedditFeed())
         self.tree.add_command(BiasRater())
         asyncio.create_task(self.custom_event_handler())
+
+    async def close(self):
+        # Close database connection pool
+        from src.db import POOL
+
+        try:
+            await asyncio.to_thread(POOL.close)
+            print("Successfully closed database connection pool.")
+        except Exception as e:
+            print(f"Error closing DB pool: {e}")
+        await super().close()
 
     async def custom_event_handler(self):
         while True:
@@ -86,10 +90,7 @@ class TsukiBot(commands.Bot):
             if event["type"] == "cancel_command":
                 guild_id = event["guild_id"]
                 command_name = event["command_name"]
-                if (
-                    guild_id in self.active_commands
-                    and command_name in self.active_commands[guild_id]
-                ):
+                if guild_id in self.active_commands and command_name in self.active_commands[guild_id]:
                     command_tasks = self.active_commands[guild_id][command_name]
                     for command_task in command_tasks:
                         command_task.cancel()
@@ -159,11 +160,15 @@ async def on_ready():
     print(f"Currently in {len(bot.guilds)} servers:")
     for server in bot.guilds:
         try:
+            owner = server.owner or bot.get_user(server.owner_id)
+            owner_name = owner.name if owner else f"Unknown ({server.owner_id})"
             print(
                 "Server name:",
                 server.name,
                 ", ID:",
                 server.id,
+                ", Owner:",
+                owner_name,
                 ", num of members:",
                 server.member_count,
             )
@@ -179,14 +184,12 @@ async def on_ready():
 
 
 @bot.tree.command(name="feed", description="Get random kpop content using idol or group name.")
-@discord.app_commands.describe(
-    query="Idols and groups you want to include. Use `r` or `random` for random idol."
-)
+@discord.app_commands.describe(query="Idols and groups you want to include. Use `r` or `random` for random idol.")
 async def feed(interaction: discord.Interaction, query: str | None = None):
+    await interaction.response.defer(thinking=True)
     if not await asyncio.to_thread(has_completed_daily, interaction.user.id):
-        await interaction.response.send_message(
-            f"Complete today's `/bias daily` before using feed! {TSUKI_NOM}",
-            ephemeral=True,
+        await interaction.edit_original_response(
+            content=f"Complete today's `/bias daily` before using feed! {TSUKI_NOM}",
         )
         return
     min_age = await asyncio.to_thread(get_min_age, interaction.guild_id)
@@ -198,18 +201,18 @@ async def feed(interaction: discord.Interaction, query: str | None = None):
     if not role_ids:
         text = f"Could not find a role for `{query if query else 'random'}`. This message will disappear in 30s."
         print(text)
-        await interaction.response.send_message(text, delete_after=30)
+        await interaction.edit_original_response(content=text)
         return
 
     role_ids_and_urls = await asyncio.to_thread(get_random_link_for_each_role, role_ids, min_age)
     if not role_ids_and_urls:
         text = f"Could not find a content link for role id `{role_ids[0]}` given query `{query if query else 'random'}`. This message will disappear in 30s."
         print(text)
-        await interaction.response.send_message(text, delete_after=30)
+        await interaction.edit_original_response(content=text)
         return
 
     # Send the message and get the sent message
-    await interaction.response.send_message(role_ids_and_urls[0][1])
+    await interaction.edit_original_response(content=role_ids_and_urls[0][1])
     sent_message = await interaction.original_response()
 
     # React to the sent message with feedback emotes
@@ -219,11 +222,15 @@ async def feed(interaction: discord.Interaction, query: str | None = None):
 
     # Count emotes and update database
     sent_message = await interaction.channel.fetch_message(sent_message.id)
-    await gather_reactions(
-        message=sent_message,
-        url=role_ids_and_urls[0][1],
-        role_id=role_ids_and_urls[0][0],
+    task = asyncio.create_task(
+        gather_reactions(
+            message=sent_message,
+            url=role_ids_and_urls[0][1],
+            role_id=role_ids_and_urls[0][0],
+        )
     )
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
 
     await asyncio.to_thread(add_stat_count, "feed")
 
@@ -240,15 +247,14 @@ async def latest(
     num_images: int = 5,
     skip: int = 0,
 ):
-    if not await asyncio.to_thread(has_completed_daily, interaction.user.id):
-        await interaction.response.send_message(
-            f"Complete today's `/bias daily` before using latest! {TSUKI_NOM}",
-            ephemeral=True,
-        )
-        return
     if num_images > 20:
-        await interaction.response.send_message(
-            "Cannot send more than 20 links at a time.", ephemeral=True
+        await interaction.response.send_message("Cannot send more than 20 links at a time.", ephemeral=True)
+        return
+
+    await interaction.response.defer(thinking=True)
+    if not await asyncio.to_thread(has_completed_daily, interaction.user.id):
+        await interaction.edit_original_response(
+            content=f"Complete today's `/bias daily` before using latest! {TSUKI_NOM}",
         )
         return
 
@@ -262,7 +268,7 @@ async def latest(
         if not role_ids:
             text = f"Could not find a role for `{query if query else 'random'}`. This message will disappear in 30s."
             print(text)
-            await interaction.response.send_message(text, delete_after=30)
+            await interaction.edit_original_response(content=text)
             return
         role_ids_and_urls = await asyncio.to_thread(
             get_latest_links_for_roles,
@@ -273,26 +279,22 @@ async def latest(
         )
 
     if not role_ids_and_urls:
-        await interaction.response.send_message(
-            "Could not find any content with these inputs.", ephemeral=True
-        )
+        await interaction.edit_original_response(content="Could not find any content with these inputs.")
         return
 
     text = f"Fetched latest `{len(role_ids_and_urls)}` images of `{query if query else 'all'}` after skipping first `{skip}` {TSUKI_NOM}"
     try:
-        await interaction.response.send_message(content=text)
+        await interaction.edit_original_response(content=text)
     except Exception as e:
         print(e)
         return
 
     message = await interaction.original_response()
-    tasks: list[asyncio.Task] = []
     for role_id, url in role_ids_and_urls:
-        await asyncio.shield(perform_autofeed_critical_operations(message, url, role_id, tasks))
+        await asyncio.shield(perform_autofeed_critical_operations(message, url, role_id))
         if url != role_ids_and_urls[-1][1]:
             await asyncio.sleep(4)
 
-    await asyncio.shield(asyncio.gather(*tasks))
     await asyncio.to_thread(add_stat_count, "latest")
 
 
@@ -313,12 +315,6 @@ async def autofeed(
     interval: int = 20,
     count: int = 5,
 ):
-    if not await asyncio.to_thread(has_completed_daily, interaction.user.id):
-        await interaction.response.send_message(
-            f"Complete today's `/bias daily` before using autofeed! {TSUKI_NOM}",
-            ephemeral=True,
-        )
-        return
     if interval < 2 or interval > 60 * 60 * 24:
         await interaction.response.send_message(
             f"Interval must be between 2 seconds and 24 hours ({60 * 60 * 24}).",
@@ -327,6 +323,12 @@ async def autofeed(
         return
     if count > 120:
         await interaction.response.send_message("Count cannot be more than 120", ephemeral=True)
+        return
+    await interaction.response.defer(thinking=True)
+    if not await asyncio.to_thread(has_completed_daily, interaction.user.id):
+        await interaction.edit_original_response(
+            content=f"Complete today's `/bias daily` before using autofeed! {TSUKI_NOM}",
+        )
         return
     guild_id = interaction.guild_id
     command_name = "autofeed"
@@ -344,10 +346,9 @@ async def autofeed(
         await asyncio.to_thread(add_stat_count, "autofeed")
 
 
-async def autofeed_command(
-    interaction: discord.Interaction, query: str | None, interval: int, count: int
-):
-    await interaction.response.defer(thinking=True)
+async def autofeed_command(interaction: discord.Interaction, query: str | None, interval: int, count: int):
+    if not interaction.response.is_done():
+        await interaction.response.defer(thinking=True)
     min_age = await asyncio.to_thread(get_min_age, interaction.guild_id)
     if query in [None, "r", "random"]:
         role_ids = await asyncio.to_thread(get_random_roles, count, min_age)
@@ -367,15 +368,11 @@ async def autofeed_command(
         temp = count // temp + 1
         role_ids = (role_ids * temp)[:count]
 
-    role_ids_and_urls = await asyncio.to_thread(
-        get_random_link_for_each_role, role_ids=role_ids, min_age=min_age
-    )
+    role_ids_and_urls = await asyncio.to_thread(get_random_link_for_each_role, role_ids=role_ids, min_age=min_age)
 
     # One retry attempt incase a role had a full recently sent queue
     if not role_ids_and_urls or len(role_ids_and_urls) != count:
-        role_ids_and_urls = await asyncio.to_thread(
-            get_random_link_for_each_role, role_ids=role_ids, min_age=min_age
-        )
+        role_ids_and_urls = await asyncio.to_thread(get_random_link_for_each_role, role_ids=role_ids, min_age=min_age)
 
     # Proceed only if we got more than half of the count urls
     if not role_ids_and_urls or len(role_ids_and_urls) < count // 2:
@@ -399,10 +396,9 @@ async def autofeed_command(
     message = await interaction.original_response()
 
     text = []
-    tasks: list[asyncio.Task] = []
     try:
         for role_id, url in role_ids_and_urls:
-            await asyncio.shield(perform_autofeed_critical_operations(message, url, role_id, tasks))
+            await asyncio.shield(perform_autofeed_critical_operations(message, url, role_id))
             if url != role_ids_and_urls[-1][1]:
                 await asyncio.sleep(interval)
 
@@ -411,12 +407,9 @@ async def autofeed_command(
     finally:
         text.append(f"Thank you for choosing HanniBot {TSUKI_HARAM_HUG}")
         await message.reply(" ".join(text))
-        await asyncio.shield(asyncio.gather(*tasks))
 
 
-async def perform_autofeed_critical_operations(
-    message: discord.Message, url: str, role_id: str, tasks: list[asyncio.Task]
-):
+async def perform_autofeed_critical_operations(message: discord.Message, url: str, role_id: str):
     message = await message.reply(content=url)
 
     emotes = [UPVOTE_EMOTE, REPORT_EMOTE]
@@ -424,13 +417,13 @@ async def perform_autofeed_critical_operations(
         await message.add_reaction(emote)
 
     reaction_gathering_task = asyncio.create_task(gather_reactions(message, url, role_id))
-    tasks.append(reaction_gathering_task)
+    _background_tasks.add(reaction_gathering_task)
+    reaction_gathering_task.add_done_callback(_background_tasks.discard)
 
 
-async def bias_autofeed_command(
-    interaction: discord.Interaction, scope: str, interval: int, count: int
-):
-    await interaction.response.defer(thinking=True)
+async def bias_autofeed_command(interaction: discord.Interaction, scope: str, interval: int, count: int):
+    if not interaction.response.is_done():
+        await interaction.response.defer(thinking=True)
     min_age = await asyncio.to_thread(get_min_age, interaction.guild_id)
 
     if scope == "global":
@@ -456,15 +449,11 @@ async def bias_autofeed_command(
     # Pick randomly with weights and replacement
     role_ids = random.choices(top_roles, weights=weights, k=count)
 
-    role_ids_and_urls = await asyncio.to_thread(
-        get_random_link_for_each_role, role_ids=role_ids, min_age=min_age
-    )
+    role_ids_and_urls = await asyncio.to_thread(get_random_link_for_each_role, role_ids=role_ids, min_age=min_age)
 
     # One retry attempt incase a role had a full recently sent queue
     if not role_ids_and_urls or len(role_ids_and_urls) != count:
-        role_ids_and_urls = await asyncio.to_thread(
-            get_random_link_for_each_role, role_ids=role_ids, min_age=min_age
-        )
+        role_ids_and_urls = await asyncio.to_thread(get_random_link_for_each_role, role_ids=role_ids, min_age=min_age)
 
     # Proceed only if we got more than half of the count urls
     if not role_ids_and_urls or len(role_ids_and_urls) < count // 2:
@@ -488,10 +477,9 @@ async def bias_autofeed_command(
     message = await interaction.original_response()
 
     text_parts = []
-    tasks: list[asyncio.Task] = []
     try:
         for role_id, url in role_ids_and_urls:
-            await asyncio.shield(perform_autofeed_critical_operations(message, url, role_id, tasks))
+            await asyncio.shield(perform_autofeed_critical_operations(message, url, role_id))
             if url != role_ids_and_urls[-1][1]:
                 await asyncio.sleep(interval)
 
@@ -500,7 +488,6 @@ async def bias_autofeed_command(
     finally:
         text_parts.append(f"Thank you for choosing HanniBot {TSUKI_HARAM_HUG}")
         await message.reply(" ".join(text_parts))
-        await asyncio.shield(asyncio.gather(*tasks))
 
 
 @discord.app_commands.default_permissions(manage_messages=True)
@@ -525,14 +512,18 @@ class RedditFeed(discord.app_commands.Group):
         subreddit: str = "kpopfap",
     ):
         try:
+            await interaction.response.defer(thinking=True)
             assert interaction.guild_id is not None
             await asyncio.to_thread(set_reddit_feed, interaction.guild_id, channel.id, subreddit)
-            await interaction.response.send_message(
-                f"Channel `{channel.name}` is set to recieve updates from `r/{subreddit}`."
+            await interaction.edit_original_response(
+                content=f"Channel `{channel.name}` is set to recieve updates from `r/{subreddit}`."
             )
         except Exception as e:
             print(e)
-            await interaction.response.send_message(f"Failed to set channel: {e}", ephemeral=True)
+            if not interaction.response.is_done():
+                await interaction.response.send_message(f"Failed to set channel: {e}", ephemeral=True)
+            else:
+                await interaction.edit_original_response(content=f"Failed to set channel: {e}")
         await asyncio.to_thread(add_stat_count, "reddit_set_feed")
 
     @discord.app_commands.command(
@@ -541,34 +532,36 @@ class RedditFeed(discord.app_commands.Group):
     )
     async def list_feeds(self, interaction: discord.Interaction):
         try:
+            await interaction.response.defer(ephemeral=True, thinking=True)
             assert interaction.guild_id is not None
             subs = await asyncio.to_thread(get_subscriptions, interaction.guild_id)
             if not subs:
-                await interaction.response.send_message(
-                    "No reddit feeds for this server.", ephemeral=True
-                )
+                await interaction.edit_original_response(content="No reddit feeds for this server.")
             else:
-                await interaction.response.send_message(
-                    f"Subscriptions of channel and subreddit: `{str(subs)}`"
+                await interaction.edit_original_response(
+                    content=f"Subscriptions of channel and subreddit: `{str(subs)}`"
                 )
         except Exception as e:
             print(e)
-            await interaction.response.send_message(
-                f"Failed to get server subscriptions: {e}", ephemeral=True
-            )
+            if not interaction.response.is_done():
+                await interaction.response.send_message(f"Failed to get server subscriptions: {e}", ephemeral=True)
+            else:
+                await interaction.edit_original_response(content=f"Failed to get server subscriptions: {e}")
         await asyncio.to_thread(add_stat_count, "reddit_list_feeds")
 
-    @discord.app_commands.command(
-        name="unset_feeds", description="Unset all reddit feeds for this server."
-    )
+    @discord.app_commands.command(name="unset_feeds", description="Unset all reddit feeds for this server.")
     async def unset_feeds(self, interaction: discord.Interaction):
         try:
+            await interaction.response.defer(thinking=True)
             assert interaction.guild_id is not None
             await asyncio.to_thread(unset_feeds, interaction.guild_id)
-            await interaction.response.send_message("Unset all reddits feed for this server.")
+            await interaction.edit_original_response(content="Unset all reddits feed for this server.")
         except Exception as e:
             print(e)
-            await interaction.response.send_message(f"Failed to unset feeds: {e}", ephemeral=True)
+            if not interaction.response.is_done():
+                await interaction.response.send_message(f"Failed to unset feeds: {e}", ephemeral=True)
+            else:
+                await interaction.edit_original_response(content=f"Failed to unset feeds: {e}")
         await asyncio.to_thread(add_stat_count, "reddit_unset_feeds")
 
 
@@ -576,9 +569,7 @@ class RedditFeed(discord.app_commands.Group):
 @discord.app_commands.guild_only()
 class BirthdayFeed(discord.app_commands.Group):
     def __init__(self):
-        super().__init__(
-            name="birthday_feed", description="Commands for configuring birthday feed."
-        )
+        super().__init__(name="birthday_feed", description="Commands for configuring birthday feed.")
         return
 
     @discord.app_commands.command(
@@ -588,27 +579,33 @@ class BirthdayFeed(discord.app_commands.Group):
     @discord.app_commands.describe(channel="Channel to receive birthday updates")
     async def set_feed(self, interaction: discord.Interaction, channel: discord.TextChannel):
         try:
+            await interaction.response.defer(thinking=True)
             assert interaction.guild_id is not None
             await asyncio.to_thread(set_birthday_feed, interaction.guild_id, channel.id)
-            await interaction.response.send_message(
-                f"Channel `{channel.name}` is set to recieve birthday updates."
+            await interaction.edit_original_response(
+                content=f"Channel `{channel.name}` is set to recieve birthday updates."
             )
         except Exception as e:
             print(e)
-            await interaction.response.send_message(f"Failed to set channel: {e}", ephemeral=True)
+            if not interaction.response.is_done():
+                await interaction.response.send_message(f"Failed to set channel: {e}", ephemeral=True)
+            else:
+                await interaction.edit_original_response(content=f"Failed to set channel: {e}")
         await asyncio.to_thread(add_stat_count, "birthday_set_feed")
 
-    @discord.app_commands.command(
-        name="unset_feeds", description="Unset all birthday feeds for this server."
-    )
+    @discord.app_commands.command(name="unset_feeds", description="Unset all birthday feeds for this server.")
     async def unset_feeds(self, interaction: discord.Interaction):
         try:
+            await interaction.response.defer(thinking=True)
             assert interaction.guild_id is not None
             await asyncio.to_thread(unset_birthday_feeds, interaction.guild_id)
-            await interaction.response.send_message("Unset all birthday feeds for this server.")
+            await interaction.edit_original_response(content="Unset all birthday feeds for this server.")
         except Exception as e:
             print(e)
-            await interaction.response.send_message(f"Failed to unset feeds: {e}", ephemeral=True)
+            if not interaction.response.is_done():
+                await interaction.response.send_message(f"Failed to unset feeds: {e}", ephemeral=True)
+            else:
+                await interaction.edit_original_response(content=f"Failed to unset feeds: {e}")
         await asyncio.to_thread(add_stat_count, "birthday_unset_feed")
 
 
@@ -652,24 +649,31 @@ class Admin(discord.app_commands.Group):
             "days": "day",
         }.items():
             min_age = min_age.replace(plural, singular)
+
+        # Fast local validation before deferring
         try:
             if "year" not in min_age or int(min_age.split("year")[0]) < 18:
                 await interaction.response.send_message(
                     "Min age should be at least 18, e.g. `18 year 1 month`",
                     ephemeral=True,
                 )
+                return
+        except Exception:
+            await interaction.response.send_message(
+                "Min age was poorly formatted. Should be in the format `22 year 2 month 2 week`",
+                ephemeral=True,
+            )
+            return
 
-            else:
-                await asyncio.to_thread(set_min_age, interaction.guild_id, min_age)
-                await interaction.response.send_message(
-                    f"Min age has been successfully set to `{min_age}`.", ephemeral=True
-                )
-
+        # Defer and then do the database update
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        try:
+            await asyncio.to_thread(set_min_age, interaction.guild_id, min_age)
+            await interaction.edit_original_response(content=f"Min age has been successfully set to `{min_age}`.")
         except Exception as e:
             print(f"Guild setting failed for guild {interaction.guild_id}: {e}")
-            await interaction.response.send_message(
-                "Min age was not poorly formatted. Should be in the format `22 year 2 month 2 week`",
-                ephemeral=True,
+            await interaction.edit_original_response(
+                content="Min age was poorly formatted. Should be in the format `22 year 2 month 2 week`"
             )
         await asyncio.to_thread(add_stat_count, "set_age_limit")
 
@@ -700,14 +704,13 @@ class BiasRater(discord.app_commands.Group):
         description="Today's 8-idol bracket challenge (same set for everyone, once per day)",
     )
     async def daily(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True, thinking=True)
         if await asyncio.to_thread(has_completed_daily, interaction.user.id):
-            await interaction.response.send_message(
-                "You've already completed today's daily bracket! Come back tomorrow.",
-                ephemeral=True,
+            await interaction.edit_original_response(
+                content="You've already completed today's daily bracket! Come back tomorrow."
             )
             return
 
-        await interaction.response.defer(ephemeral=True, thinking=True)
         try:
             view = await VoteView.create_daily(
                 user_id=interaction.user.id,
@@ -743,15 +746,11 @@ class BiasRater(discord.app_commands.Group):
             tops = await asyncio.to_thread(get_global_leaderboard, LEADERBOARD_MAX_ENTRIES)
             title = "Global Idol Leaderboard"
         elif scope == "server":
-            tops = await asyncio.to_thread(
-                get_guild_leaderboard, interaction.guild_id, LEADERBOARD_MAX_ENTRIES
-            )
+            tops = await asyncio.to_thread(get_guild_leaderboard, interaction.guild_id, LEADERBOARD_MAX_ENTRIES)
             title = f"Server Leaderboard for {interaction.guild.name}"
         else:
             target_user = user or interaction.user
-            tops = await asyncio.to_thread(
-                get_personal_leaderboard, target_user.id, LEADERBOARD_MAX_ENTRIES
-            )
+            tops = await asyncio.to_thread(get_personal_leaderboard, target_user.id, LEADERBOARD_MAX_ENTRIES)
             title = f"Personal Leaderboard for {target_user.display_name}"
 
         if not tops.entries:
@@ -818,12 +817,6 @@ class BiasRater(discord.app_commands.Group):
         interval: int = 20,
         count: int = 5,
     ):
-        if not await asyncio.to_thread(has_completed_daily, interaction.user.id):
-            await interaction.response.send_message(
-                f"Complete today's `/bias daily` before using autofeed! {TSUKI_NOM}",
-                ephemeral=True,
-            )
-            return
         if interval < 2 or interval > 60 * 60 * 24:
             await interaction.response.send_message(
                 f"Interval must be between 2 seconds and 24 hours ({60 * 60 * 24}).",
@@ -833,6 +826,14 @@ class BiasRater(discord.app_commands.Group):
         if count > 120:
             await interaction.response.send_message("Count cannot be more than 120", ephemeral=True)
             return
+
+        await interaction.response.defer(thinking=True)
+        if not await asyncio.to_thread(has_completed_daily, interaction.user.id):
+            await interaction.edit_original_response(
+                content=f"Complete today's `/bias daily` before using autofeed! {TSUKI_NOM}"
+            )
+            return
+
         guild_id = interaction.guild_id
         command_name = "autofeed"  # using autofeed command name so /admin cancel works on this too
         task = asyncio.create_task(bias_autofeed_command(interaction, scope, interval, count))
@@ -950,17 +951,9 @@ async def handle_tsuki_chat(message: discord.Message) -> None:
             history.reverse()
             history.append(message)
 
-            min_age = (
-                await asyncio.to_thread(get_min_age, message.guild.id)
-                if message.guild
-                else "18 year 1 month"
-            )
+            min_age = await asyncio.to_thread(get_min_age, message.guild.id) if message.guild else "18 year 1 month"
 
-            chat_msgs = [
-                _to_chat_msg(msg, is_trigger=(msg is message))
-                for msg in history
-                if msg.content.strip()
-            ]
+            chat_msgs = [_to_chat_msg(msg, is_trigger=(msg is message)) for msg in history if msg.content.strip()]
             result = await generate_chat_response(chat_msgs, min_age)
 
         try:

@@ -28,11 +28,7 @@ def sql_quote(s: str) -> str:
 def main() -> int:
     default_in = Path(__file__).parent / "role_info_wikidata.csv"
     in_path = Path(sys.argv[1]) if len(sys.argv) > 1 else default_in
-    out_path = (
-        Path(sys.argv[2])
-        if len(sys.argv) > 2
-        else Path(__file__).parent / "image_url_updates.sql"
-    )
+    out_path = Path(sys.argv[2]) if len(sys.argv) > 2 else Path(__file__).parent / "image_url_updates.sql"
 
     with in_path.open() as f:
         rows = list(csv.DictReader(f))
@@ -48,9 +44,7 @@ def main() -> int:
         print(f"[!] No rows with image_url found in {in_path}", file=sys.stderr)
         return 1
 
-    values_lines = ",\n    ".join(
-        f"({sql_quote(role_id)}, {sql_quote(url)})" for role_id, url in pairs
-    )
+    values_lines = ",\n    ".join(f"({sql_quote(role_id)}, {sql_quote(url)})" for role_id, url in pairs)
     sql = (
         f"-- Backfill role_info.image_url for {len(pairs)} idols.\n"
         f"-- Generated from {in_path.name}.\n"
