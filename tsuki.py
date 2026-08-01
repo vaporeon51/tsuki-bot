@@ -726,7 +726,7 @@ class BiasRater(discord.app_commands.Group):
     @discord.app_commands.command(name="wheel", description="Spin a wheel from top bias rankings")
     @discord.app_commands.describe(
         scope="global, server, or personal",
-        top_n="How many of the top idols to include (default: 6; 4–8)",
+        top_n="How many of the top idols to include (default: 6; 2–8)",
     )
     @discord.app_commands.choices(
         scope=[
@@ -739,7 +739,7 @@ class BiasRater(discord.app_commands.Group):
         self,
         interaction: discord.Interaction,
         scope: str = "personal",
-        top_n: discord.app_commands.Range[int, 4, 8] = 6,
+        top_n: discord.app_commands.Range[int, 2, 8] = 6,
     ):
         """Render a wheel and choose uniformly from the selected ranking's top N idols."""
         await interaction.response.defer(thinking=True)

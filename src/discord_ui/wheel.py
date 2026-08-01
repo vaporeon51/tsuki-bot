@@ -59,7 +59,9 @@ def _draw_wheel(entries: list[LeaderboardEntry]) -> Image.Image:
     count = len(entries)
     step = 360 / count
     portrait_size = max(82, min(138, 194 - count * 14))
-    portrait_radius = 205 if count >= 7 else 215
+    # Larger wheels have narrower wedges, so move their portraits outward to
+    # leave the center hand and hub visually unobstructed.
+    portrait_radius = 235 if count == 8 else 225 if count == 7 else 215
 
     for index, entry in enumerate(entries):
         # Center the first entry under the 12 o'clock pointer before spinning.
