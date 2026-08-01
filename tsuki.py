@@ -106,8 +106,8 @@ def start_loop_once(loop: tasks.Loop) -> None:
 
 
 @bot.tree.command(name="wheel", description="Spin a wheel from your top personal bias rankings.")
-@discord.app_commands.describe(top_n="How many of your top idols to include (default: 10; 2–16)")
-async def wheel(interaction: discord.Interaction, top_n: discord.app_commands.Range[int, 2, 16] = 10):
+@discord.app_commands.describe(top_n="How many of your top idols to include (default: 6; 4–8)")
+async def wheel(interaction: discord.Interaction, top_n: discord.app_commands.Range[int, 4, 8] = 6):
     """Render a short wheel spin and choose uniformly from the user's top N idols."""
     await interaction.response.defer(thinking=True)
     leaderboard = await asyncio.to_thread(get_personal_leaderboard, interaction.user.id, top_n)
@@ -128,10 +128,7 @@ async def wheel(interaction: discord.Interaction, top_n: discord.app_commands.Ra
     file = discord.File(result.gif, filename="bias-wheel.gif")
     embed = discord.Embed(
         title="🎡 Bias Wheel",
-        description=(
-            f"It landed on **{result.winner.member_name}** "
-            f"from **{result.winner.group_name}**!"
-        ),
+        description="The wheel has spoken!",
         color=discord.Color.gold(),
     )
     embed.set_image(url="attachment://bias-wheel.gif")

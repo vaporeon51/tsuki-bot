@@ -41,6 +41,10 @@ def render_wheel(entries: list[LeaderboardEntry]) -> WheelResult:
     if len(entries) < 2:
         raise ValueError("At least two ranked idols are needed to spin the wheel.")
 
+    # Shuffling makes each spin's wheel feel fresh while keeping every top-N idol
+    # equally likely to win.
+    entries = list(entries)
+    random.shuffle(entries)
     winner_index = random.randrange(len(entries))
     wheel = _draw_wheel(entries)
     gif = _animate_wheel(wheel, winner_index, len(entries))
@@ -77,41 +81,24 @@ def _draw_wheel(entries: list[LeaderboardEntry]) -> Image.Image:
         image.alpha_composite(portrait, (portrait_center[0] - 41, portrait_center[1] - 41))
         _draw_name(image, entry.member_name, portrait_center[0], portrait_center[1] + 55)
 
-    draw.ellipse(
-        (center - 75, center - 75, center + 75, center + 75),
-        fill=(53, 41, 88, 255),
-        outline=(255, 255, 255, 230),
-        width=5,
-    )
-    font = _font(30)
-    label = "BIAS\nWHEEL"
-    bbox = draw.multiline_textbbox((0, 0), label, font=font, align="center", spacing=0)
-    draw.multiline_text(
-        (center - (bbox[2] - bbox[0]) / 2, center - (bbox[3] - bbox[1]) / 2),
-        label,
-        fill="white",
-        font=font,
-        align="center",
-        spacing=0,
-    )
     return image
 
 
 def _animate_wheel(wheel: Image.Image, winner_index: int, count: int) -> io.BytesIO:
-    # The fixed pointer is at 12 o'clock. Land in the middle of the chosen wedge
-    # after several full clockwise turns, with progressively smaller increments.
+    """Animate only the central pointer, preserving a clear static wheel."""
     step = 360 / count
-    # Wedge 0 is already centered beneath the pointer. Rotating clockwise by one
-    # wedge width moves each subsequent entry beneath it.
-    total_rotation = 4 * 360 + winner_index * step
-    fractions = (0.0, 0.13, 0.27, 0.43, 0.58, 0.71, 0.81, 0.89, 0.95, 0.985, 1.0)
+    # Entry 0 is centered at 12 o'clock. The pointer starts there and makes six
+    # full clockwise rotations, landing precisely on the selected entry.
+    total_rotation = 6 * 360 + winner_index * step
+    frame_count = 38
     frames = []
-    for fraction in fractions:
-        rotation = total_rotation * (1 - (1 - fraction) ** 2.7)
-        frame = Image.new("RGBA", (WHEEL_SIZE, WHEEL_SIZE), _BACKGROUND)
-        spun = wheel.rotate(-rotation, resample=Image.Resampling.BICUBIC)
-        frame.alpha_composite(spun)
-        _draw_pointer(frame)
+    for frame_index in range(frame_count):
+        elapsed = frame_index / (frame_count - 1)
+        rotation = total_rotation * _spin_progress(elapsed)
+        frame = wheel.copy()
+        _draw_pointer(frame, rotation)
+        if frame_index == frame_count - 1:
+            _draw_winner_marker(frame, winner_index, count)
         frames.append(frame.convert("P", palette=Image.Palette.ADAPTIVE, colors=128))
 
     output = io.BytesIO()
@@ -120,7 +107,8 @@ def _animate_wheel(wheel: Image.Image, winner_index: int, count: int) -> io.Byte
         format="GIF",
         save_all=True,
         append_images=frames[1:],
-        duration=[70, 70, 75, 80, 95, 110, 140, 175, 230, 320, 1300],
+        # 37 × 120ms spinning frames plus the 700ms reveal ≈ 5.1 seconds.
+        duration=[120] * (frame_count - 1) + [700],
         optimize=True,
         disposal=2,
     )
@@ -129,15 +117,51 @@ def _animate_wheel(wheel: Image.Image, winner_index: int, count: int) -> io.Byte
     return output
 
 
-def _draw_pointer(image: Image.Image) -> None:
+def _spin_progress(elapsed: float) -> float:
+    """Acceleration → sustained fast spin → gradual deceleration."""
+    if elapsed < 0.18:
+        # Ease in: starts gently, then quickly reaches full speed.
+        return 0.13 * (elapsed / 0.18) ** 2
+    if elapsed < 0.60:
+        # High-speed middle section.
+        return 0.13 + 0.60 * ((elapsed - 0.18) / 0.42)
+    # Ease out over the final third, so the destination is easy to follow.
+    t = (elapsed - 0.60) / 0.40
+    return 0.73 + 0.27 * (1 - (1 - t) ** 2)
+
+
+def _draw_pointer(image: Image.Image, rotation: float) -> None:
     draw = ImageDraw.Draw(image)
     center = WHEEL_SIZE // 2
+    length = 250
+    angle = math.radians(-90 + rotation)
+    tip = (int(center + math.cos(angle) * length), int(center + math.sin(angle) * length))
+    left = (int(center + math.cos(angle + 2.55) * 34), int(center + math.sin(angle + 2.55) * 34))
+    right = (int(center + math.cos(angle - 2.55) * 34), int(center + math.sin(angle - 2.55) * 34))
     draw.polygon(
-        [(center, 42), (center - 25, 4), (center + 25, 4)],
-        fill=(255, 255, 255, 255),
+        [left, tip, right],
+        fill=(255, 255, 255, 245),
         outline=(31, 23, 49, 255),
         width=4,
     )
+    draw.ellipse(
+        (center - 42, center - 42, center + 42, center + 42),
+        fill=(53, 41, 88, 255),
+        outline=(255, 255, 255, 230),
+        width=5,
+    )
+
+
+def _draw_winner_marker(image: Image.Image, winner_index: int, count: int) -> None:
+    center = WHEEL_SIZE // 2
+    draw = ImageDraw.Draw(image)
+    step = 360 / count
+    angle = math.radians(-90 + winner_index * step)
+    x = int(center + math.cos(angle) * 125)
+    y = int(center + math.sin(angle) * 125)
+    # The winner's label is placed inside the GIF after the pointer stops.
+    draw.ellipse((x - 23, y - 23, x + 23, y + 23), fill=(255, 220, 76, 255), outline="white", width=3)
+    draw.text((x - 10, y - 11), "★", font=_font(20), fill=(72, 45, 12, 255))
 
 
 def _load_portrait(url: str, size: int) -> Image.Image:
