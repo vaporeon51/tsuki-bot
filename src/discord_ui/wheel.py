@@ -47,7 +47,7 @@ def render_wheel(entries: list[LeaderboardEntry]) -> WheelResult:
     random.shuffle(entries)
     winner_index = random.randrange(len(entries))
     wheel = _draw_wheel(entries)
-    gif = _animate_wheel(wheel, winner_index, len(entries))
+    gif = _animate_wheel(wheel, winner_index, len(entries), entries[winner_index].member_name)
     return WheelResult(winner=entries[winner_index], gif=gif)
 
 
@@ -58,6 +58,8 @@ def _draw_wheel(entries: list[LeaderboardEntry]) -> Image.Image:
     radius = 330
     count = len(entries)
     step = 360 / count
+    portrait_size = max(82, min(138, 194 - count * 14))
+    portrait_radius = 205 if count >= 7 else 215
 
     for index, entry in enumerate(entries):
         # Center the first entry under the 12 o'clock pointer before spinning.
@@ -74,23 +76,24 @@ def _draw_wheel(entries: list[LeaderboardEntry]) -> Image.Image:
 
         angle = math.radians(start + step / 2)
         portrait_center = (
-            int(center + math.cos(angle) * 205),
-            int(center + math.sin(angle) * 205),
+            int(center + math.cos(angle) * portrait_radius),
+            int(center + math.sin(angle) * portrait_radius),
         )
-        portrait = _load_portrait(entry.image_url, 82)
-        image.alpha_composite(portrait, (portrait_center[0] - 41, portrait_center[1] - 41))
-        _draw_name(image, entry.member_name, portrait_center[0], portrait_center[1] + 55)
+        portrait = _load_portrait(entry.image_url, portrait_size)
+        half_portrait = portrait_size // 2
+        image.alpha_composite(portrait, (portrait_center[0] - half_portrait, portrait_center[1] - half_portrait))
+        _draw_name(image, entry.member_name, portrait_center[0], portrait_center[1] + half_portrait + 10)
 
     return image
 
 
-def _animate_wheel(wheel: Image.Image, winner_index: int, count: int) -> io.BytesIO:
+def _animate_wheel(wheel: Image.Image, winner_index: int, count: int, winner_name: str) -> io.BytesIO:
     """Animate only the central pointer, preserving a clear static wheel."""
     step = 360 / count
     # Entry 0 is centered at 12 o'clock. The pointer starts there and makes six
     # full clockwise rotations, landing precisely on the selected entry.
     total_rotation = 6 * 360 + winner_index * step
-    frame_count = 38
+    frame_count = 86
     frames = []
     for frame_index in range(frame_count):
         elapsed = frame_index / (frame_count - 1)
@@ -98,7 +101,7 @@ def _animate_wheel(wheel: Image.Image, winner_index: int, count: int) -> io.Byte
         frame = wheel.copy()
         _draw_pointer(frame, rotation)
         if frame_index == frame_count - 1:
-            _draw_winner_marker(frame, winner_index, count)
+            _draw_winner_celebration(frame, winner_name)
         frames.append(frame.convert("P", palette=Image.Palette.ADAPTIVE, colors=128))
 
     output = io.BytesIO()
@@ -107,8 +110,8 @@ def _animate_wheel(wheel: Image.Image, winner_index: int, count: int) -> io.Byte
         format="GIF",
         save_all=True,
         append_images=frames[1:],
-        # 37 × 120ms spinning frames plus the 700ms reveal ≈ 5.1 seconds.
-        duration=[120] * (frame_count - 1) + [700],
+        # 85 × 50ms spinning frames (20 FPS) plus an 850ms reveal ≈ 5.1 seconds.
+        duration=[50] * (frame_count - 1) + [850],
         optimize=True,
         disposal=2,
     )
@@ -133,35 +136,57 @@ def _spin_progress(elapsed: float) -> float:
 def _draw_pointer(image: Image.Image, rotation: float) -> None:
     draw = ImageDraw.Draw(image)
     center = WHEEL_SIZE // 2
-    length = 250
+    length = 145
     angle = math.radians(-90 + rotation)
     tip = (int(center + math.cos(angle) * length), int(center + math.sin(angle) * length))
-    left = (int(center + math.cos(angle + 2.55) * 34), int(center + math.sin(angle + 2.55) * 34))
-    right = (int(center + math.cos(angle - 2.55) * 34), int(center + math.sin(angle - 2.55) * 34))
+    perpendicular = math.pi / 2
+    arrow_base = length - 22
+    left = (
+        int(center + math.cos(angle) * arrow_base + math.cos(angle + perpendicular) * 12),
+        int(center + math.sin(angle) * arrow_base + math.sin(angle + perpendicular) * 12),
+    )
+    right = (
+        int(center + math.cos(angle) * arrow_base + math.cos(angle - perpendicular) * 12),
+        int(center + math.sin(angle) * arrow_base + math.sin(angle - perpendicular) * 12),
+    )
+    stem_end = (
+        int(center + math.cos(angle) * arrow_base),
+        int(center + math.sin(angle) * arrow_base),
+    )
+    draw.line(((center, center), stem_end), fill=(85, 18, 30, 255), width=14)
+    draw.line(((center, center), stem_end), fill=(235, 61, 76, 255), width=8)
     draw.polygon(
         [left, tip, right],
-        fill=(255, 255, 255, 245),
-        outline=(31, 23, 49, 255),
-        width=4,
+        fill=(235, 61, 76, 255),
+        outline=(85, 18, 30, 255),
+        width=3,
     )
     draw.ellipse(
-        (center - 42, center - 42, center + 42, center + 42),
+        (center - 26, center - 26, center + 26, center + 26),
         fill=(53, 41, 88, 255),
-        outline=(255, 255, 255, 230),
-        width=5,
+        outline=(235, 61, 76, 255),
+        width=4,
     )
 
 
-def _draw_winner_marker(image: Image.Image, winner_index: int, count: int) -> None:
-    center = WHEEL_SIZE // 2
+def _draw_winner_celebration(image: Image.Image, winner_name: str) -> None:
     draw = ImageDraw.Draw(image)
-    step = 360 / count
-    angle = math.radians(-90 + winner_index * step)
-    x = int(center + math.cos(angle) * 125)
-    y = int(center + math.sin(angle) * 125)
-    # The winner's label is placed inside the GIF after the pointer stops.
-    draw.ellipse((x - 23, y - 23, x + 23, y + 23), fill=(255, 220, 76, 255), outline="white", width=3)
-    draw.text((x - 10, y - 11), "★", font=_font(20), fill=(72, 45, 12, 255))
+    text = f"{winner_name.upper()}!"
+    font = _font(30)
+    bbox = draw.textbbox((0, 0), text, font=font)
+    text_width = bbox[2] - bbox[0]
+    x = (WHEEL_SIZE - text_width) // 2
+    y = 748
+    draw.rounded_rectangle((x - 14, y - 6, x + text_width + 14, y + 40), radius=12, fill=(53, 41, 88, 240))
+    draw.text((x, y), text, font=font, fill=(255, 234, 112, 255))
+    # Draw confetti rather than relying on an emoji font being installed.
+    for x1, y1, x2, y2, color in (
+        (270, 746, 278, 730, (255, 112, 143, 255)),
+        (300, 756, 286, 742, (102, 196, 255, 255)),
+        (530, 746, 522, 730, (114, 211, 153, 255)),
+        (500, 756, 514, 742, (255, 173, 94, 255)),
+    ):
+        draw.line((x1, y1, x2, y2), fill=color, width=5)
 
 
 def _load_portrait(url: str, size: int) -> Image.Image:
