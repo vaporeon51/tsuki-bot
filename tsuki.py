@@ -755,8 +755,13 @@ class BiasRater(discord.app_commands.Group):
 
         entries = leaderboard.entries
         if len(entries) < 2:
-            await interaction.edit_original_response(
-                content=f"You need at least two idols in the {scope_label} leaderboard before spinning the wheel!"
+            await interaction.delete_original_response()
+            await interaction.followup.send(
+                content=(
+                    f"You need at least two idols in the {scope_label} leaderboard before spinning the wheel. "
+                    "Use `/bias vote` or `/bias daily` to get started, or try `/bias wheel scope:Global`."
+                ),
+                ephemeral=True,
             )
             return
 
@@ -764,7 +769,7 @@ class BiasRater(discord.app_commands.Group):
             result = await asyncio.to_thread(render_wheel, entries)
         except Exception as exc:
             print(f"Bias wheel rendering error: {exc}")
-            await interaction.edit_original_response(content="I couldn't spin the bias wheel right now. Please try again!")
+            await interaction.edit_original_response(content=f"Bias wheel rendering error: {exc}")
             return
 
         file = discord.File(result.gif, filename="bias-wheel.gif")
