@@ -140,7 +140,7 @@ def _draw_pointer(image: Image.Image, rotation: float) -> None:
     angle = math.radians(-90 + rotation)
     tip = (int(center + math.cos(angle) * length), int(center + math.sin(angle) * length))
     perpendicular = math.pi / 2
-    arrow_base = length - 22
+    arrow_base = 20
     left = (
         int(center + math.cos(angle) * arrow_base + math.cos(angle + perpendicular) * 12),
         int(center + math.sin(angle) * arrow_base + math.sin(angle + perpendicular) * 12),
@@ -149,22 +149,14 @@ def _draw_pointer(image: Image.Image, rotation: float) -> None:
         int(center + math.cos(angle) * arrow_base + math.cos(angle - perpendicular) * 12),
         int(center + math.sin(angle) * arrow_base + math.sin(angle - perpendicular) * 12),
     )
-    stem_end = (
-        int(center + math.cos(angle) * arrow_base),
-        int(center + math.sin(angle) * arrow_base),
-    )
-    draw.line(((center, center), stem_end), fill=(85, 18, 30, 255), width=14)
-    draw.line(((center, center), stem_end), fill=(235, 61, 76, 255), width=8)
     draw.polygon(
         [left, tip, right],
         fill=(235, 61, 76, 255),
-        outline=(85, 18, 30, 255),
-        width=3,
     )
     draw.ellipse(
         (center - 26, center - 26, center + 26, center + 26),
-        fill=(53, 41, 88, 255),
-        outline=(235, 61, 76, 255),
+        fill=(255, 255, 255, 255),
+        outline=(255, 255, 255, 255),
         width=4,
     )
 

@@ -105,38 +105,6 @@ def start_loop_once(loop: tasks.Loop) -> None:
         loop.start()
 
 
-@bot.tree.command(name="wheel", description="Spin a wheel from your top personal bias rankings.")
-@discord.app_commands.describe(top_n="How many of your top idols to include (default: 6; 4–8)")
-async def wheel(interaction: discord.Interaction, top_n: discord.app_commands.Range[int, 4, 8] = 6):
-    """Render a short wheel spin and choose uniformly from the user's top N idols."""
-    await interaction.response.defer(thinking=True)
-    leaderboard = await asyncio.to_thread(get_personal_leaderboard, interaction.user.id, top_n)
-    entries = leaderboard.entries
-    if len(entries) < 2:
-        await interaction.edit_original_response(
-            content="You need at least two idols in your personal leaderboard before spinning the wheel! Use '/bias vote' or '/bias daily' to get started!"
-        )
-        return
-
-    try:
-        result = await asyncio.to_thread(render_wheel, entries)
-    except Exception as exc:
-        print(f"Bias wheel rendering error: {exc}")
-        await interaction.edit_original_response(content="I couldn't spin the bias wheel right now. Please try again!")
-        return
-
-    file = discord.File(result.gif, filename="bias-wheel.gif")
-    embed = discord.Embed(
-        title="🎡 Bias Wheel",
-        description="The wheel has spoken!",
-        color=discord.Color.gold(),
-    )
-    embed.set_image(url="attachment://bias-wheel.gif")
-    embed.set_footer(text=f"Randomly selected from your top {len(entries)} personal biases")
-    await interaction.edit_original_response(embed=embed, attachments=[file])
-    await asyncio.to_thread(add_stat_count, "bias_wheel")
-
-
 @tasks.loop(seconds=60 * 60 * 12)
 async def update_content_loop():
     try:
@@ -754,6 +722,61 @@ class BiasRater(discord.app_commands.Group):
         except Exception as e:
             await interaction.edit_original_response(content=f"Could not start daily: {str(e)}")
         await asyncio.to_thread(add_stat_count, "bias_daily")
+
+    @discord.app_commands.command(name="wheel", description="Spin a wheel from top bias rankings")
+    @discord.app_commands.describe(
+        scope="global, server, or personal",
+        top_n="How many of the top idols to include (default: 6; 4–8)",
+    )
+    @discord.app_commands.choices(
+        scope=[
+            discord.app_commands.Choice(name="Global", value="global"),
+            discord.app_commands.Choice(name="Server", value="server"),
+            discord.app_commands.Choice(name="Personal", value="personal"),
+        ]
+    )
+    async def wheel(
+        self,
+        interaction: discord.Interaction,
+        scope: str = "personal",
+        top_n: discord.app_commands.Range[int, 4, 8] = 6,
+    ):
+        """Render a wheel and choose uniformly from the selected ranking's top N idols."""
+        await interaction.response.defer(thinking=True)
+        if scope == "global":
+            leaderboard = await asyncio.to_thread(get_global_leaderboard, top_n)
+            scope_label = "global"
+        elif scope == "server":
+            leaderboard = await asyncio.to_thread(get_guild_leaderboard, interaction.guild_id, top_n)
+            scope_label = "server"
+        else:
+            leaderboard = await asyncio.to_thread(get_personal_leaderboard, interaction.user.id, top_n)
+            scope_label = "personal"
+
+        entries = leaderboard.entries
+        if len(entries) < 2:
+            await interaction.edit_original_response(
+                content=f"You need at least two idols in the {scope_label} leaderboard before spinning the wheel!"
+            )
+            return
+
+        try:
+            result = await asyncio.to_thread(render_wheel, entries)
+        except Exception as exc:
+            print(f"Bias wheel rendering error: {exc}")
+            await interaction.edit_original_response(content="I couldn't spin the bias wheel right now. Please try again!")
+            return
+
+        file = discord.File(result.gif, filename="bias-wheel.gif")
+        embed = discord.Embed(
+            title="🎡 Bias Wheel",
+            description="The wheel has spoken!",
+            color=discord.Color.gold(),
+        )
+        embed.set_image(url="attachment://bias-wheel.gif")
+        embed.set_footer(text=f"Randomly selected from the top {len(entries)} {scope_label} biases")
+        await interaction.edit_original_response(embed=embed, attachments=[file])
+        await asyncio.to_thread(add_stat_count, "bias_wheel")
 
     @discord.app_commands.command(name="leaderboard", description="Show ELO leaderboard")
     @discord.app_commands.describe(
