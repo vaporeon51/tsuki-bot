@@ -55,7 +55,7 @@ from src.discord_ui.bias_rater import (
 )
 from src.llm_chat import HANNI_EMOJIS, OVERLOAD_MESSAGES, ChatMsg, generate_chat_response
 from src.rate_limit import ChannelRateLimiter, Decision
-from src.reaction.gather import gather_dead_link, gather_reactions
+from src.reaction.gather import gather_reactions
 from src.reddit_feeds import update_reddit_feeds
 
 TOKEN = os.environ.get("TOKEN")
@@ -177,6 +177,7 @@ async def recover_content_loop():
             f"selected={summary['selected_count']} "
             f"succeeded={summary['succeeded_count']} "
             f"failed={summary['failed_count']} "
+            f"unrecoverable={summary['unrecoverable_count']} "
             f"rate_limited={summary['rate_limited_count']} "
             f"skipped={summary['skipped_count']}"
         )

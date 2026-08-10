@@ -238,7 +238,8 @@ def mark_url_dead(url: str) -> int:
             cur.execute(
                 """
                 UPDATE content_links
-                SET is_dead = TRUE
+                SET is_dead = TRUE,
+                    is_recovery_exhausted = FALSE
                 WHERE url = %s
                   AND is_dead = FALSE;
                 """,

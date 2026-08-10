@@ -54,6 +54,10 @@ IMGUR_DELETED_PLACEHOLDER_DIMENSIONS = (161, 81)
 VIDEO_EXTENSIONS = (".mp4", ".webm", ".gif")
 
 
+class UnrecoverableMediaError(RuntimeError):
+    """Both recovery sources were tried and no usable media was found."""
+
+
 @dataclass(frozen=True)
 class MediaCandidate:
     url: str
@@ -96,7 +100,7 @@ def trim_first_frame(input_path: Path, force: bool) -> Path:
         raise RuntimeError("ffmpeg is required for the frame-trimming pipeline step")
     if input_path.suffix.lower() not in VIDEO_EXTENSIONS:
         suffix = input_path.suffix.lower() or "unknown media"
-        raise RuntimeError(f"First-frame trimming requires video media; recovered file is {suffix}")
+        raise UnrecoverableMediaError(f"First-frame trimming requires video media; recovered file is {suffix}")
 
     output_path = trimmed_output_path(input_path, force)
     temporary_path = output_path.with_name(f".{output_path.stem}.part.mp4")
@@ -861,8 +865,10 @@ def history_search_and_recover(
         print(f"Scanned {scanned:,} messages across {pages} page(s); matching messages: {matches}")
 
     if matches:
-        raise RuntimeError("Found the original message, but none of its media URLs are still downloadable")
-    raise RuntimeError(f"No message containing the exact URL {target_url!r} was found in the searched history")
+        raise UnrecoverableMediaError("Found the original message, but none of its media URLs are still downloadable")
+    raise UnrecoverableMediaError(
+        f"No message containing the exact URL {target_url!r} was found in the searched history"
+    )
 
 
 def search_response_messages(response: dict) -> list[dict]:
@@ -899,7 +905,7 @@ def recover_via_discord(
     if downloaded:
         return downloaded
     if matches:
-        raise RuntimeError("Found the original message, but none of its media URLs are still downloadable")
+        raise UnrecoverableMediaError("Found the original message, but none of its media URLs are still downloadable")
 
     if history_fallback:
         print("No indexed match; falling back to channel-history pagination")
@@ -907,7 +913,7 @@ def recover_via_discord(
             discord_client, media_client, channel_id, target_url, media_id, output_dir, max_pages, force
         )
 
-    raise RuntimeError(
+    raise UnrecoverableMediaError(
         f"Discord's indexed search found no message containing the exact URL {target_url!r}; "
         "retry with --history-fallback if needed"
     )
@@ -1066,6 +1072,7 @@ def fetch_candidates(connection: psycopg.Connection[Any], role_id: str | None, l
             uploaded_date
         FROM content_links
         WHERE is_dead = TRUE
+          AND is_recovery_exhausted = FALSE
           AND url ILIKE '%%imgur.com/%%'
           {role_filter}
         ORDER BY initial_reaction_count DESC, num_reports DESC, uploaded_date ASC, content_link_id ASC
@@ -1151,6 +1158,32 @@ def update_recovery_item(
     connection.commit()
 
 
+def mark_recovery_exhausted(connection: psycopg.Connection[Any], candidate: Candidate) -> bool:
+    """Stop retrying a link after its second confirmed no-media recovery failure."""
+
+    with connection.transaction():
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE content_links
+                SET is_recovery_exhausted = TRUE
+                WHERE content_link_id = %s
+                  AND url = %s
+                  AND is_dead = TRUE
+                  AND is_recovery_exhausted = FALSE
+                  AND (
+                      SELECT COUNT(*)
+                      FROM content_link_recovery_items
+                      WHERE content_link_id = %s
+                        AND status = 'unrecoverable'
+                  ) >= 2
+                RETURNING content_link_id;
+                """,
+                (candidate.content_link_id, candidate.url, candidate.content_link_id),
+            )
+            return cursor.fetchone() is not None
+
+
 def summarize_recovery_batch(
     connection: psycopg.Connection[Any], batch_id: str, selected_count: int, stopped: bool, error: str | None
 ) -> dict[str, int | str | None]:
@@ -1160,6 +1193,7 @@ def summarize_recovery_batch(
             SELECT
                 COUNT(*) FILTER (WHERE status = 'updated') AS succeeded_count,
                 COUNT(*) FILTER (WHERE status = 'failed') AS failed_count,
+                COUNT(*) FILTER (WHERE status = 'unrecoverable') AS unrecoverable_count,
                 COUNT(*) FILTER (WHERE status = 'rate_limited') AS rate_limited_count,
                 COUNT(*) FILTER (WHERE status = 'upload_unknown') AS ambiguous_count,
                 COUNT(*) FILTER (WHERE status IN ('pending', 'running')) AS skipped_count,
@@ -1173,7 +1207,9 @@ def summarize_recovery_batch(
     logged_count = counts.pop("logged_count")
     counts["skipped_count"] += max(selected_count - logged_count, 0)
     has_unresolved = counts["skipped_count"] > 0
-    has_errors = any(counts[key] > 0 for key in ("failed_count", "rate_limited_count", "ambiguous_count"))
+    has_errors = any(
+        counts[key] > 0 for key in ("failed_count", "unrecoverable_count", "rate_limited_count", "ambiguous_count")
+    )
     return {
         "batch_id": batch_id,
         "status": "partial" if stopped or has_unresolved or has_errors else "completed",
@@ -1204,6 +1240,7 @@ def apply_success(
                 SET original_url = COALESCE(original_url, %s),
                     url = %s,
                     is_dead = FALSE,
+                    is_recovery_exhausted = FALSE,
                     processed_date = NOW()
                 WHERE content_link_id = %s
                   AND url = %s
@@ -1343,6 +1380,12 @@ def process_candidate(
         except ImgurUploadUnknownError as error:
             mark_failure("upload_unknown", str(error))
             raise
+        except UnrecoverableMediaError as error:
+            mark_failure("unrecoverable", str(error))
+            exhausted = mark_recovery_exhausted(connection, candidate)
+            message = "recovery exhausted" if exhausted else "will retry once more"
+            print(f"UNRECOVERABLE {candidate.content_link_id}: {error}; {message}")
+            return
         except Exception as error:
             mark_failure("failed", str(error))
             print(f"FAILED {candidate.content_link_id}: {error}")
@@ -1368,6 +1411,7 @@ def run_recovery_batch(config: RecoveryBatchConfig, *, print_candidates_output: 
                 "selected_count": 0,
                 "succeeded_count": 0,
                 "failed_count": 0,
+                "unrecoverable_count": 0,
                 "rate_limited_count": 0,
                 "ambiguous_count": 0,
                 "skipped_count": 0,
@@ -1408,6 +1452,7 @@ def run_recovery_batch(config: RecoveryBatchConfig, *, print_candidates_output: 
                     f"Batch {batch_id}: {summary['status']} | "
                     f"succeeded={summary['succeeded_count']} "
                     f"failed={summary['failed_count']} "
+                    f"unrecoverable={summary['unrecoverable_count']} "
                     f"rate_limited={summary['rate_limited_count']} "
                     f"ambiguous={summary['ambiguous_count']} "
                     f"skipped={summary['skipped_count']}"
