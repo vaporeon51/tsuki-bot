@@ -16,7 +16,19 @@ IS_DEV = os.environ.get("IS_DEV", "false") == "true"
 from src.birthday_feed import update_birthday_feeds
 
 # Local imports after dotenv to ensure environment variables are available
-from src.config.constants import REDDIT_FEED_WINDOW, REPORT_EMOTE, TSUKI_HARAM_HUG, TSUKI_NOM, UPVOTE_EMOTE
+from src.config.constants import (
+    CONTENT_RECOVERY_BATCH_SIZE,
+    CONTENT_RECOVERY_INTERVAL_SECONDS,
+    CONTENT_RECOVERY_MAX_UPLOADS_PER_HOUR,
+    CONTENT_RECOVERY_ROLE_ID,
+    CONTENT_RECOVERY_UPLOAD_INTERVAL,
+    REDDIT_FEED_WINDOW,
+    REPORT_EMOTE,
+    TSUKI_HARAM_HUG,
+    TSUKI_NOM,
+    UPVOTE_EMOTE,
+)
+from src.content_recovery import RecoveryBatchConfig, run_recovery_batch
 from src.content_update import run_content_links_update
 from src.db.bias_rater import (
     cleanup_accumulating_tables,
@@ -148,6 +160,32 @@ async def cleanup_accumulating_tables_loop():
         print(f"Error with accumulating table cleanup:\n{str(e)}")
 
 
+@tasks.loop(seconds=CONTENT_RECOVERY_INTERVAL_SECONDS)
+async def recover_content_loop():
+    if not os.environ.get("IMGUR_CLIENT_ID", "").strip():
+        print("Skipping content recovery: IMGUR_CLIENT_ID is not configured.")
+        return
+
+    config = RecoveryBatchConfig(
+        role_id=CONTENT_RECOVERY_ROLE_ID,
+        limit=CONTENT_RECOVERY_BATCH_SIZE,
+        upload_interval=CONTENT_RECOVERY_UPLOAD_INTERVAL,
+        max_uploads_per_hour=CONTENT_RECOVERY_MAX_UPLOADS_PER_HOUR,
+    )
+    try:
+        summary = await asyncio.to_thread(run_recovery_batch, config, print_candidates_output=False)
+        print(
+            "Content recovery finished: "
+            f"selected={summary['selected_count']} "
+            f"succeeded={summary['succeeded_count']} "
+            f"failed={summary['failed_count']} "
+            f"rate_limited={summary['rate_limited_count']} "
+            f"skipped={summary['skipped_count']}"
+        )
+    except Exception as e:
+        print(f"Error with content recovery: {e}")
+
+
 @bot.event
 async def on_ready():
     try:
@@ -181,6 +219,7 @@ async def on_ready():
         start_loop_once(update_birthday_feeds_loop)
         start_loop_once(update_bias_leaderboard_snapshots_loop)
         start_loop_once(cleanup_accumulating_tables_loop)
+        start_loop_once(recover_content_loop)
 
 
 @bot.tree.command(name="feed", description="Get random kpop content using idol or group name.")
