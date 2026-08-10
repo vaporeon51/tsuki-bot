@@ -6,7 +6,7 @@ TSUKI_HARAM_HUG = "💕"
 # Number of seconds to wait before updating db based on reactions
 REACT_WAIT_SEC = 3 * 60
 
-# Number of reports to eliminate a role + link combination from being shown
+# Number of user reports to hide a role + link combination.
 REPORT_THRESHOLD = 5
 
 # 20x net upvotes translates to 2x the probability so log(2)/log(20)
@@ -26,3 +26,10 @@ REDDIT_FEED_WINDOW = 5 * 60
 
 # Max attachments for reddit feed
 REDDIT_MAX_ATTACHMENTS = 10
+
+# Content recovery scheduler and conservative Imgur upload budget.
+CONTENT_RECOVERY_CLI_ROLE_ID = "1000863360776147054"
+CONTENT_RECOVERY_BATCH_SIZE = 50
+CONTENT_RECOVERY_INTERVAL_SECONDS = 75 * 60
+CONTENT_RECOVERY_UPLOAD_INTERVAL = 2.0
+CONTENT_RECOVERY_MAX_UPLOADS_PER_HOUR = 100

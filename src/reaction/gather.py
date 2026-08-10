@@ -3,7 +3,7 @@ import asyncio
 import discord
 
 from src.config.constants import REACT_WAIT_SEC
-from src.db.utils import report_broken_link_url, update_given_emote_counts
+from src.db.utils import mark_url_dead, update_given_emote_counts
 from src.utils import is_message_broken_link
 
 
@@ -17,8 +17,8 @@ async def gather_dead_link(message: discord.Message, url: str) -> None:
     message = await message.channel.fetch_message(message.id)
 
     if is_message_broken_link(message):
-        print(f"URL {url} is broken and incrementing their report counts.")
-        await asyncio.to_thread(report_broken_link_url, url)
+        marked_count = await asyncio.to_thread(mark_url_dead, url)
+        print(f"URL {url} is broken; marked {marked_count} content link(s) dead.")
 
 
 async def gather_reactions(message: discord.Message, url: str, role_id: str) -> None:
@@ -30,8 +30,8 @@ async def gather_reactions(message: discord.Message, url: str, role_id: str) -> 
     message = await message.channel.fetch_message(message.id)
 
     if is_message_broken_link(message):
-        print(f"URL {url} is broken and incrementing their report counts.")
-        await asyncio.to_thread(report_broken_link_url, url)
+        marked_count = await asyncio.to_thread(mark_url_dead, url)
+        print(f"URL {url} is broken; marked {marked_count} content link(s) dead.")
         return
 
     count_by_emote = {emote.emoji: emote.count for emote in message.reactions}
