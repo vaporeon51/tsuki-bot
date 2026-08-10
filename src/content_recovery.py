@@ -1446,6 +1446,10 @@ def run_recovery_batch(config: RecoveryBatchConfig, *, print_candidates_output: 
     with psycopg.connect(get_database_url()) as connection:
         candidates = fetch_candidates(connection, config.role_id, config.limit)
         connection.commit()
+        print(
+            f"Content recovery starting: selected={len(candidates)} limit={config.limit} "
+            f"role_id={config.role_id or 'all'}"
+        )
         if print_candidates_output:
             print_candidates(candidates)
         if not candidates:
