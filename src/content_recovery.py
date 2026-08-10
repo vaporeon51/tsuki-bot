@@ -561,7 +561,7 @@ class ImgurClient:
             ) from error
         except requests.RequestException as error:
             raise ImgurUploadUnknownError(
-                f"Imgur upload request failed ({type(error).__name__}); the server may have accepted it"
+                f"Imgur upload request failed ({type(error).__name__}: {error}); " "the server may have accepted it"
             ) from error
 
         try:
