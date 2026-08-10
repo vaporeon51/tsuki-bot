@@ -13,6 +13,7 @@ from src.db.utils import get_closest_roles, get_random_link_for_each_role, get_r
 # Models tried in order; we advance to the next one only on a rate limit.
 # (All must support native function calling.)
 MODELS = [
+    "gemini-3.5-flash-lite",
     "gemini-3.1-flash-lite",  # primary
     "gemma-4-31b-it",  # fallback
 ]
