@@ -40,7 +40,11 @@ import requests
 from dotenv import load_dotenv
 from psycopg.rows import dict_row
 
-from src.config.constants import CONTENT_RECOVERY_CLI_ROLE_ID
+from src.config.constants import (  # isort: skip
+    CONTENT_RECOVERY_CLI_ROLE_ID,
+    CONTENT_RECOVERY_MAX_UPLOADS_PER_HOUR,
+    CONTENT_RECOVERY_UPLOAD_INTERVAL,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_GUILD_ID = "124767749099618304"
@@ -213,7 +217,11 @@ def extract_imgur_id(raw_url: str) -> str:
 
     parsed = urlparse(raw_url.strip())
     host = parsed.hostname.lower() if parsed.hostname else ""
-    if parsed.scheme not in {"http", "https"} or host not in {"imgur.com", "www.imgur.com", "i.imgur.com"}:
+    if parsed.scheme not in {"http", "https"} or host not in {
+        "imgur.com",
+        "www.imgur.com",
+        "i.imgur.com",
+    }:
         raise ValueError("URL must point to imgur.com or i.imgur.com")
 
     parts = [unquote(part) for part in parsed.path.split("/") if part]
@@ -388,7 +396,11 @@ class DiscordClient:
 
         try:
             with tempfile.NamedTemporaryFile(
-                mode="wb", prefix=f".{media_id}.", suffix=".part", dir=output_dir, delete=False
+                mode="wb",
+                prefix=f".{media_id}.",
+                suffix=".part",
+                dir=output_dir,
+                delete=False,
             ) as temporary_file:
                 temporary_path = Path(temporary_file.name)
                 for chunk in response.iter_content(chunk_size=1024 * 1024):
@@ -468,7 +480,12 @@ def parse_retry_after(response: requests.Response) -> float | None:
 
 
 class ImgurClient:
-    def __init__(self, client_id: str, min_upload_interval: float = 2.0, max_uploads_per_hour: int = 40):
+    def __init__(
+        self,
+        client_id: str,
+        min_upload_interval: float = CONTENT_RECOVERY_UPLOAD_INTERVAL,
+        max_uploads_per_hour: int = CONTENT_RECOVERY_MAX_UPLOADS_PER_HOUR,
+    ):
         if not client_id.strip():
             raise ValueError("IMGUR_CLIENT_ID is empty")
         if max_uploads_per_hour < 1:
@@ -583,7 +600,7 @@ class ImgurClient:
                 media_id=media_id,
                 url=link,
                 deletehash=deletehash if isinstance(deletehash, str) else None,
-                processing_status=processing_status if isinstance(processing_status, str) else None,
+                processing_status=(processing_status if isinstance(processing_status, str) else None),
             )
         finally:
             response.close()
@@ -910,7 +927,14 @@ def recover_via_discord(
     if history_fallback:
         print("No indexed match; falling back to channel-history pagination")
         return history_search_and_recover(
-            discord_client, media_client, channel_id, target_url, media_id, output_dir, max_pages, force
+            discord_client,
+            media_client,
+            channel_id,
+            target_url,
+            media_id,
+            output_dir,
+            max_pages,
+            force,
         )
 
     raise UnrecoverableMediaError(
@@ -1035,8 +1059,8 @@ class RecoveryBatchConfig:
     max_pages: int | None = None
     history_fallback: bool = False
     imgur_client_id_env: str = "IMGUR_CLIENT_ID"
-    upload_interval: float = 2.0
-    max_uploads_per_hour: int = 50
+    upload_interval: float = CONTENT_RECOVERY_UPLOAD_INTERVAL
+    max_uploads_per_hour: int = CONTENT_RECOVERY_MAX_UPLOADS_PER_HOUR
 
 
 def get_database_url() -> str:
@@ -1089,7 +1113,7 @@ def fetch_candidates(connection: psycopg.Connection[Any], role_id: str | None, l
             num_reports=int(row["num_reports"]),
             initial_reaction_count=int(row["initial_reaction_count"]),
             author=row["author"],
-            uploaded_date=str(row["uploaded_date"]) if row["uploaded_date"] is not None else None,
+            uploaded_date=(str(row["uploaded_date"]) if row["uploaded_date"] is not None else None),
         )
         for row in rows
     ]
@@ -1106,7 +1130,12 @@ def start_recovery_item(connection: psycopg.Connection[Any], batch_id: str, cand
                     (batch_id, content_link_id, original_url, num_reports_before, status, started_at)
                 VALUES (%s, %s, %s, %s, 'running', NOW());
                 """,
-                (batch_id, candidate.content_link_id, candidate.url, candidate.num_reports),
+                (
+                    batch_id,
+                    candidate.content_link_id,
+                    candidate.url,
+                    candidate.num_reports,
+                ),
             )
 
 
@@ -1185,7 +1214,11 @@ def mark_recovery_exhausted(connection: psycopg.Connection[Any], candidate: Cand
 
 
 def summarize_recovery_batch(
-    connection: psycopg.Connection[Any], batch_id: str, selected_count: int, stopped: bool, error: str | None
+    connection: psycopg.Connection[Any],
+    batch_id: str,
+    selected_count: int,
+    stopped: bool,
+    error: str | None,
 ) -> dict[str, int | str | None]:
     with connection.cursor(row_factory=dict_row) as cursor:
         cursor.execute(
@@ -1208,7 +1241,13 @@ def summarize_recovery_batch(
     counts["skipped_count"] += max(selected_count - logged_count, 0)
     has_unresolved = counts["skipped_count"] > 0
     has_errors = any(
-        counts[key] > 0 for key in ("failed_count", "unrecoverable_count", "rate_limited_count", "ambiguous_count")
+        counts[key] > 0
+        for key in (
+            "failed_count",
+            "unrecoverable_count",
+            "rate_limited_count",
+            "ambiguous_count",
+        )
     )
     return {
         "batch_id": batch_id,
@@ -1247,7 +1286,12 @@ def apply_success(
                   AND is_dead = TRUE
                 RETURNING num_reports;
                 """,
-                (candidate.url, replacement_url, candidate.content_link_id, candidate.url),
+                (
+                    candidate.url,
+                    replacement_url,
+                    candidate.content_link_id,
+                    candidate.url,
+                ),
             )
             result = cursor.fetchone()
             if result is None:
@@ -1338,7 +1382,7 @@ def process_candidate(
             recovery_method=downloaded.recovery_method if downloaded else None,
             imgur_id=uploaded.media_id if uploaded else None,
             downloaded_size=downloaded.size if downloaded else None,
-            trimmed_size=trimmed.stat().st_size if trimmed and trimmed.exists() else None,
+            trimmed_size=(trimmed.stat().st_size if trimmed and trimmed.exists() else None),
             trimmed_sha256=trimmed_sha256,
             error=error,
             num_reports_after=candidate.num_reports,
@@ -1434,7 +1478,14 @@ def run_recovery_batch(config: RecoveryBatchConfig, *, print_candidates_output: 
         try:
             for candidate in candidates:
                 try:
-                    process_candidate(connection, candidate, config, media_client, imgur_client, batch_id)
+                    process_candidate(
+                        connection,
+                        candidate,
+                        config,
+                        media_client,
+                        imgur_client,
+                        batch_id,
+                    )
                 except ImgurRateLimitError as error:
                     stopped = True
                     stop_reason = str(error)
@@ -1443,7 +1494,7 @@ def run_recovery_batch(config: RecoveryBatchConfig, *, print_candidates_output: 
                 except ImgurUploadUnknownError as error:
                     stopped = True
                     stop_reason = str(error)
-                    print("Stopping the batch because an Imgur upload outcome was ambiguous.")
+                    print(f"Stopping the batch because an Imgur upload outcome was ambiguous: {error}")
                     break
         finally:
             try:
@@ -1470,12 +1521,21 @@ def parse_batch_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=CONTENT_RECOVERY_CLI_ROLE_ID,
         help=f"Only recover links for this role (default: {CONTENT_RECOVERY_CLI_ROLE_ID})",
     )
-    parser.add_argument("--limit", type=int, default=50, help="Maximum number of candidates to select (default: 50)")
     parser.add_argument(
-        "--apply", action="store_true", help="Perform recovery and database updates; otherwise only print candidates"
+        "--limit",
+        type=int,
+        default=50,
+        help="Maximum number of candidates to select (default: 50)",
     )
     parser.add_argument(
-        "--channel-id", default=DEFAULT_CHANNEL_ID, help=f"Discord channel to search (default: {DEFAULT_CHANNEL_ID})"
+        "--apply",
+        action="store_true",
+        help="Perform recovery and database updates; otherwise only print candidates",
+    )
+    parser.add_argument(
+        "--channel-id",
+        default=DEFAULT_CHANNEL_ID,
+        help=f"Discord channel to search (default: {DEFAULT_CHANNEL_ID})",
     )
     parser.add_argument(
         "--guild-id",
@@ -1488,10 +1548,15 @@ def parse_batch_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Environment variable containing Discord credentials",
     )
     parser.add_argument(
-        "--max-pages", type=int, default=None, help="With --history-fallback, stop after this many 100-message pages"
+        "--max-pages",
+        type=int,
+        default=None,
+        help="With --history-fallback, stop after this many 100-message pages",
     )
     parser.add_argument(
-        "--history-fallback", action="store_true", help="Fall back to channel history if indexed search finds nothing"
+        "--history-fallback",
+        action="store_true",
+        help="Fall back to channel history if indexed search finds nothing",
     )
     parser.add_argument(
         "--imgur-client-id-env",
@@ -1499,10 +1564,16 @@ def parse_batch_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Environment variable containing the Imgur client ID (default: IMGUR_CLIENT_ID)",
     )
     parser.add_argument(
-        "--upload-interval", type=float, default=2.0, help="Minimum seconds between Imgur uploads (default: 2)"
+        "--upload-interval",
+        type=float,
+        default=CONTENT_RECOVERY_UPLOAD_INTERVAL,
+        help=f"Minimum seconds between Imgur uploads (default: {CONTENT_RECOVERY_UPLOAD_INTERVAL:g})",
     )
     parser.add_argument(
-        "--max-uploads-per-hour", type=int, default=50, help="Conservative local upload budget (default: 50)"
+        "--max-uploads-per-hour",
+        type=int,
+        default=CONTENT_RECOVERY_MAX_UPLOADS_PER_HOUR,
+        help=f"Conservative local upload budget (default: {CONTENT_RECOVERY_MAX_UPLOADS_PER_HOUR})",
     )
     return parser.parse_args(argv)
 
