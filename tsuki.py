@@ -20,7 +20,6 @@ from src.config.constants import (
     CONTENT_RECOVERY_BATCH_SIZE,
     CONTENT_RECOVERY_INTERVAL_SECONDS,
     CONTENT_RECOVERY_MAX_UPLOADS_PER_HOUR,
-    CONTENT_RECOVERY_ROLE_ID,
     CONTENT_RECOVERY_UPLOAD_INTERVAL,
     REDDIT_FEED_WINDOW,
     REPORT_EMOTE,
@@ -167,7 +166,6 @@ async def recover_content_loop():
         return
 
     config = RecoveryBatchConfig(
-        role_id=CONTENT_RECOVERY_ROLE_ID,
         limit=CONTENT_RECOVERY_BATCH_SIZE,
         upload_interval=CONTENT_RECOVERY_UPLOAD_INTERVAL,
         max_uploads_per_hour=CONTENT_RECOVERY_MAX_UPLOADS_PER_HOUR,

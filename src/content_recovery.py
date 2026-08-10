@@ -40,6 +40,8 @@ import requests
 from dotenv import load_dotenv
 from psycopg.rows import dict_row
 
+from src.config.constants import CONTENT_RECOVERY_CLI_ROLE_ID
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_GUILD_ID = "124767749099618304"
 DEFAULT_CHANNEL_ID = "124767749099618304"
@@ -106,6 +108,13 @@ def trim_first_frame(input_path: Path, force: bool) -> Path:
         "-loglevel",
         "error",
         "-y",
+        # Keep peak memory small enough for the worker dyno.  x264's default
+        # lookahead and worker threads can otherwise retain hundreds of MiB
+        # for a high-resolution source, even when the compressed file is tiny.
+        "-threads",
+        "1",
+        "-filter_threads",
+        "1",
         "-i",
         str(input_path),
         "-vf",
@@ -117,7 +126,11 @@ def trim_first_frame(input_path: Path, force: bool) -> Path:
         "-c:v",
         "libx264",
         "-preset",
-        "medium",
+        "veryfast",
+        "-tune",
+        "zerolatency",
+        "-threads",
+        "1",
         "-crf",
         "18",
         "-pix_fmt",
@@ -256,6 +269,9 @@ class DiscordClient:
         if authorization:
             self.session.headers.update({"Authorization": authorization})
 
+    def close(self) -> None:
+        self.session.close()
+
     def get_messages(self, channel_id: str, before: str | None) -> list[dict]:
         params: dict[str, str | int] = {"limit": 100}
         if before:
@@ -264,28 +280,31 @@ class DiscordClient:
         url = f"{DISCORD_API_BASE}/channels/{channel_id}/messages"
         for attempt in range(6):
             response = self.session.get(url, params=params, timeout=(10, 60))
-            if response.status_code == 429:
-                if attempt == 5:
-                    raise RuntimeError("Discord rate-limited the search too many times")
-                try:
-                    retry_after = float(response.json().get("retry_after", 1))
-                except (ValueError, TypeError):
-                    retry_after = 1.0
-                time.sleep(max(retry_after, 0.1))
-                continue
+            try:
+                if response.status_code == 429:
+                    if attempt == 5:
+                        raise RuntimeError("Discord rate-limited the search too many times")
+                    try:
+                        retry_after = float(response.json().get("retry_after", 1))
+                    except (ValueError, TypeError):
+                        retry_after = 1.0
+                    time.sleep(max(retry_after, 0.1))
+                    continue
 
-            if response.status_code == 401:
-                raise RuntimeError("Discord rejected the credentials (401); check TOKEN/USER_AUTH in .env")
-            if response.status_code == 403:
-                raise RuntimeError("Discord denied channel history (403); check channel permissions")
-            if response.status_code == 404:
-                raise RuntimeError(f"Discord could not find channel {channel_id} (404)")
-            response.raise_for_status()
+                if response.status_code == 401:
+                    raise RuntimeError("Discord rejected the credentials (401); check TOKEN/USER_AUTH in .env")
+                if response.status_code == 403:
+                    raise RuntimeError("Discord denied channel history (403); check channel permissions")
+                if response.status_code == 404:
+                    raise RuntimeError(f"Discord could not find channel {channel_id} (404)")
+                response.raise_for_status()
 
-            messages = response.json()
-            if not isinstance(messages, list):
-                raise RuntimeError("Discord returned an unexpected message-history response")
-            return messages
+                messages = response.json()
+                if not isinstance(messages, list):
+                    raise RuntimeError("Discord returned an unexpected message-history response")
+                return messages
+            finally:
+                response.close()
 
         raise RuntimeError("Discord request failed after retries")
 
@@ -302,34 +321,37 @@ class DiscordClient:
 
         for attempt in range(6):
             response = self.session.get(url, params=params, timeout=(10, 60))
-            if response.status_code == 429:
-                if attempt == 5:
-                    raise RuntimeError("Discord rate-limited the search too many times")
-                try:
-                    retry_after = float(response.json().get("retry_after", 1))
-                except (ValueError, TypeError):
-                    retry_after = 1.0
-                time.sleep(max(retry_after, 0.1))
-                continue
+            try:
+                if response.status_code == 429:
+                    if attempt == 5:
+                        raise RuntimeError("Discord rate-limited the search too many times")
+                    try:
+                        retry_after = float(response.json().get("retry_after", 1))
+                    except (ValueError, TypeError):
+                        retry_after = 1.0
+                    time.sleep(max(retry_after, 0.1))
+                    continue
 
-            payload = response.json()
-            if response.status_code == 202:
-                if attempt == 5:
-                    return payload
-                retry_after = payload.get("retry_after", 1) if isinstance(payload, dict) else 1
-                time.sleep(max(float(retry_after or 1), 0.1))
-                continue
+                payload = response.json()
+                if response.status_code == 202:
+                    if attempt == 5:
+                        return payload
+                    retry_after = payload.get("retry_after", 1) if isinstance(payload, dict) else 1
+                    time.sleep(max(float(retry_after or 1), 0.1))
+                    continue
 
-            if response.status_code == 401:
-                raise RuntimeError("Discord rejected the credentials (401); check TOKEN/USER_AUTH in .env")
-            if response.status_code == 403:
-                raise RuntimeError("Discord denied message search (403); check history/content permissions")
-            if response.status_code == 404:
-                raise RuntimeError(f"Discord could not find guild {guild_id} (404)")
-            response.raise_for_status()
-            if not isinstance(payload, dict):
-                raise RuntimeError("Discord returned an unexpected message-search response")
-            return payload
+                if response.status_code == 401:
+                    raise RuntimeError("Discord rejected the credentials (401); check TOKEN/USER_AUTH in .env")
+                if response.status_code == 403:
+                    raise RuntimeError("Discord denied message search (403); check history/content permissions")
+                if response.status_code == 404:
+                    raise RuntimeError(f"Discord could not find guild {guild_id} (404)")
+                response.raise_for_status()
+                if not isinstance(payload, dict):
+                    raise RuntimeError("Discord returned an unexpected message-search response")
+                return payload
+            finally:
+                response.close()
 
         raise RuntimeError("Discord message search failed after retries")
 
@@ -460,6 +482,9 @@ class ImgurClient:
         self.upload_times: deque[float] = deque()
         self.last_rate_limits: dict[str, int | None] = {}
 
+    def close(self) -> None:
+        self.session.close()
+
     def _wait_for_upload_slot(self) -> None:
         now = time.monotonic()
         while self.upload_times and now - self.upload_times[0] >= 3600:
@@ -518,43 +543,46 @@ class ImgurClient:
                 f"Imgur upload request failed ({type(error).__name__}); the server may have accepted it"
             ) from error
 
-        self._capture_rate_limits(response)
-
-        if response.status_code == 429:
-            retry_after = parse_retry_after(response)
-            raise ImgurRateLimitError(
-                f"Imgur rate-limited the upload (429); retry_after={retry_after or 'unknown'}",
-                retry_after,
-            )
-        if response.status_code < 200 or response.status_code >= 300:
-            detail = response.text.strip()[:500]
-            raise ImgurUploadError(f"Imgur upload failed with HTTP {response.status_code}: {detail}")
-
         try:
-            payload = response.json()
-        except ValueError as error:
-            raise ImgurUploadError("Imgur returned a non-JSON upload response") from error
+            self._capture_rate_limits(response)
 
-        data = payload.get("data") if isinstance(payload, dict) else None
-        if not isinstance(data, dict):
-            raise ImgurUploadError("Imgur upload response did not contain a data object")
+            if response.status_code == 429:
+                retry_after = parse_retry_after(response)
+                raise ImgurRateLimitError(
+                    f"Imgur rate-limited the upload (429); retry_after={retry_after or 'unknown'}",
+                    retry_after,
+                )
+            if response.status_code < 200 or response.status_code >= 300:
+                detail = response.text.strip()[:500]
+                raise ImgurUploadError(f"Imgur upload failed with HTTP {response.status_code}: {detail}")
 
-        media_id = data.get("id")
-        link = data.get("mp4") or data.get("link")
-        if not isinstance(media_id, str) or not media_id:
-            raise ImgurUploadError("Imgur upload response did not contain a media ID")
-        if not isinstance(link, str) or not link:
-            raise ImgurUploadError("Imgur upload response did not contain a direct media URL")
+            try:
+                payload = response.json()
+            except ValueError as error:
+                raise ImgurUploadError("Imgur returned a non-JSON upload response") from error
 
-        processing = data.get("processing")
-        processing_status = processing.get("status") if isinstance(processing, dict) else None
-        deletehash = data.get("deletehash")
-        return UploadedMedia(
-            media_id=media_id,
-            url=link,
-            deletehash=deletehash if isinstance(deletehash, str) else None,
-            processing_status=processing_status if isinstance(processing_status, str) else None,
-        )
+            data = payload.get("data") if isinstance(payload, dict) else None
+            if not isinstance(data, dict):
+                raise ImgurUploadError("Imgur upload response did not contain a data object")
+
+            media_id = data.get("id")
+            link = data.get("mp4") or data.get("link")
+            if not isinstance(media_id, str) or not media_id:
+                raise ImgurUploadError("Imgur upload response did not contain a media ID")
+            if not isinstance(link, str) or not link:
+                raise ImgurUploadError("Imgur upload response did not contain a direct media URL")
+
+            processing = data.get("processing")
+            processing_status = processing.get("status") if isinstance(processing, dict) else None
+            deletehash = data.get("deletehash")
+            return UploadedMedia(
+                media_id=media_id,
+                url=link,
+                deletehash=deletehash if isinstance(deletehash, str) else None,
+                processing_status=processing_status if isinstance(processing_status, str) else None,
+            )
+        finally:
+            response.close()
 
     def verify_direct_url(self, media_url: str, attempts: int = 5) -> None:
         """Confirm that the returned direct URL is serving media before DB mutation."""
@@ -918,18 +946,21 @@ def recover_content(
         print("Warning: USER_AUTH is being used; prefer a bot TOKEN with channel history permissions.")
 
     discord_client = DiscordClient(authorization)
-    return recover_via_discord(
-        discord_client,
-        media_client,
-        guild_id,
-        channel_id,
-        target_url,
-        media_id,
-        output_dir,
-        max_pages,
-        force,
-        history_fallback,
-    )
+    try:
+        return recover_via_discord(
+            discord_client,
+            media_client,
+            guild_id,
+            channel_id,
+            target_url,
+            media_id,
+            output_dir,
+            max_pages,
+            force,
+            history_fallback,
+        )
+    finally:
+        discord_client.close()
 
 
 def run_single_cli(argv: list[str] | None = None) -> int:
@@ -950,23 +981,31 @@ def run_single_cli(argv: list[str] | None = None) -> int:
             print(f"Searching channel {channel_id} for URL {target_url} using {auth_source}")
             if auth_source == "USER_AUTH":
                 print("Warning: USER_AUTH is being used; prefer a bot TOKEN with channel history permissions.")
-            response = DiscordClient(authorization).search_messages(args.guild_id, channel_id, target_url)
+            discord_client = DiscordClient(authorization)
+            try:
+                response = discord_client.search_messages(args.guild_id, channel_id, target_url)
+            finally:
+                discord_client.close()
             print(json.dumps(response, indent=2, ensure_ascii=False))
             return 0
         with tempfile.TemporaryDirectory(prefix="content-recovery-") as temporary_dir:
-            downloaded = recover_content(
-                DiscordClient(),
-                args.auth_env,
-                guild_id,
-                channel_id,
-                target_url,
-                media_id,
-                Path(temporary_dir),
-                args.max_pages,
-                args.force,
-                args.history_fallback,
-            )
-            trim_first_frame(downloaded.path, args.force)
+            media_client = DiscordClient()
+            try:
+                downloaded = recover_content(
+                    media_client,
+                    args.auth_env,
+                    guild_id,
+                    channel_id,
+                    target_url,
+                    media_id,
+                    Path(temporary_dir),
+                    args.max_pages,
+                    args.force,
+                    args.history_fallback,
+                )
+                trim_first_frame(downloaded.path, args.force)
+            finally:
+                media_client.close()
         print("Trimmed first frame; temporary recovery files were removed.")
         return 0
     except (ValueError, RuntimeError, requests.RequestException) as error:
@@ -1347,11 +1386,15 @@ def run_recovery_batch(config: RecoveryBatchConfig, *, print_candidates_output: 
             }
 
         media_client = DiscordClient()
-        imgur_client = ImgurClient(
-            client_id,
-            min_upload_interval=config.upload_interval,
-            max_uploads_per_hour=config.max_uploads_per_hour,
-        )
+        try:
+            imgur_client = ImgurClient(
+                client_id,
+                min_upload_interval=config.upload_interval,
+                max_uploads_per_hour=config.max_uploads_per_hour,
+            )
+        except Exception:
+            media_client.close()
+            raise
         batch_id = uuid.uuid4().hex
         stopped = False
         stop_reason = None
@@ -1370,21 +1413,29 @@ def run_recovery_batch(config: RecoveryBatchConfig, *, print_candidates_output: 
                     print("Stopping the batch because an Imgur upload outcome was ambiguous.")
                     break
         finally:
-            summary = summarize_recovery_batch(connection, batch_id, len(candidates), stopped, stop_reason)
-            print(
-                f"Batch {batch_id}: {summary['status']} | "
-                f"succeeded={summary['succeeded_count']} "
-                f"failed={summary['failed_count']} "
-                f"rate_limited={summary['rate_limited_count']} "
-                f"ambiguous={summary['ambiguous_count']} "
-                f"skipped={summary['skipped_count']}"
-            )
+            try:
+                summary = summarize_recovery_batch(connection, batch_id, len(candidates), stopped, stop_reason)
+                print(
+                    f"Batch {batch_id}: {summary['status']} | "
+                    f"succeeded={summary['succeeded_count']} "
+                    f"failed={summary['failed_count']} "
+                    f"rate_limited={summary['rate_limited_count']} "
+                    f"ambiguous={summary['ambiguous_count']} "
+                    f"skipped={summary['skipped_count']}"
+                )
+            finally:
+                media_client.close()
+                imgur_client.close()
         return summary
 
 
 def parse_batch_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Recover, transform, re-upload, and replace dead Imgur links.")
-    parser.add_argument("--role-id", help="Only recover links for this role; omit to consider all roles")
+    parser.add_argument(
+        "--role-id",
+        default=CONTENT_RECOVERY_CLI_ROLE_ID,
+        help=f"Only recover links for this role (default: {CONTENT_RECOVERY_CLI_ROLE_ID})",
+    )
     parser.add_argument("--limit", type=int, default=50, help="Maximum number of candidates to select (default: 50)")
     parser.add_argument(
         "--apply", action="store_true", help="Perform recovery and database updates; otherwise only print candidates"
