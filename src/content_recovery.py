@@ -665,12 +665,9 @@ def recover_direct_imgur(
 ) -> DownloadedMedia | None:
     """Try Imgur's CDN directly before consulting Discord."""
 
-    print(f"Trying direct Imgur recovery for {media_id}")
     for candidate in direct_imgur_candidates(media_id):
-        print(f"  Trying {candidate.label}")
         downloaded = media_client.download(candidate, output_dir, media_id, force)
         if downloaded:
-            print(f"Recovered {downloaded.size:,} bytes as {downloaded.content_type} via direct Imgur GET")
             return DownloadedMedia(
                 path=downloaded.path,
                 content_type=downloaded.content_type,
@@ -812,16 +809,10 @@ def recover_from_messages(
             continue
 
         matches += 1
-        message_id = message.get("id", "unknown")
-        timestamp = message.get("timestamp", "unknown time")
         candidates = build_candidates(message, target_url, media_id)
-        print(f"Found matching message {message_id} ({timestamp}); trying {len(candidates)} media URL(s)")
         for candidate in candidates:
-            print(f"  Trying {candidate.label}")
             downloaded = media_client.download(candidate, output_dir, media_id, force)
             if downloaded:
-                print(f"Recovered {downloaded.size:,} bytes as {downloaded.content_type}")
-                print(f"Message: {message_id}")
                 return (
                     DownloadedMedia(
                         path=downloaded.path,
@@ -1356,8 +1347,6 @@ def process_candidate(
             mark_failure("failed", str(error))
             print(f"FAILED {candidate.content_link_id}: {error}")
             return
-
-    print(f"UPDATED {candidate.content_link_id}: {candidate.url} -> {uploaded.url}")
 
 
 def run_recovery_batch(config: RecoveryBatchConfig, *, print_candidates_output: bool = True) -> dict[str, object]:
