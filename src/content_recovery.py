@@ -976,7 +976,7 @@ def run_single_cli(argv: list[str] | None = None) -> int:
 
 @dataclass(frozen=True)
 class Candidate:
-    """A reported Imgur link selected for the recovery pipeline."""
+    """A dead Imgur link selected for the recovery pipeline."""
 
     content_link_id: int
     role_id: str
@@ -993,7 +993,6 @@ class RecoveryBatchConfig:
 
     role_id: str | None = None
     limit: int = 50
-    threshold: int = 5
     guild_id: str = DEFAULT_GUILD_ID
     channel_id: str = DEFAULT_CHANNEL_ID
     auth_env: str | None = None
@@ -1011,20 +1010,16 @@ def get_database_url() -> str:
     return database_url
 
 
-def fetch_candidates(
-    connection: psycopg.Connection[Any], role_id: str | None, threshold: int, limit: int
-) -> list[Candidate]:
-    """Select reported Imgur URLs in the order with the most user impact first."""
+def fetch_candidates(connection: psycopg.Connection[Any], role_id: str | None, limit: int) -> list[Candidate]:
+    """Select dead Imgur URLs in the order with the most user impact first."""
 
     if limit < 1:
         raise ValueError("--limit must be at least 1")
-    if threshold < 1:
-        raise ValueError("--threshold must be at least 1")
     if role_id and not role_id.isdigit():
         raise ValueError("--role-id must contain only digits")
 
     role_filter = ""
-    params: list[object] = [threshold]
+    params: list[object] = []
     if role_id:
         role_filter = "AND role_id = %s"
         params.append(role_id)
@@ -1040,7 +1035,7 @@ def fetch_candidates(
             author,
             uploaded_date
         FROM content_links
-        WHERE num_reports >= %s
+        WHERE is_dead = TRUE
           AND url ILIKE '%%imgur.com/%%'
           {role_filter}
         ORDER BY initial_reaction_count DESC, num_reports DESC, uploaded_date ASC, content_link_id ASC
@@ -1169,7 +1164,7 @@ def apply_success(
     trimmed_sha256: str,
     imgur_id: str,
 ) -> None:
-    """Atomically replace a link and mark its recovery audit item as complete."""
+    """Atomically replace a dead link while preserving its user report count."""
 
     with connection.transaction():
         with connection.cursor() as cursor:
@@ -1178,19 +1173,22 @@ def apply_success(
                 UPDATE content_links
                 SET original_url = COALESCE(original_url, %s),
                     url = %s,
-                    num_reports = 0,
+                    is_dead = FALSE,
                     processed_date = NOW()
                 WHERE content_link_id = %s
                   AND url = %s
-                  AND num_reports = %s;
+                  AND is_dead = TRUE
+                RETURNING num_reports;
                 """,
-                (candidate.url, replacement_url, candidate.content_link_id, candidate.url, candidate.num_reports),
+                (candidate.url, replacement_url, candidate.content_link_id, candidate.url),
             )
-            if cursor.rowcount != 1:
+            result = cursor.fetchone()
+            if result is None:
                 raise RuntimeError(
-                    f"Database row changed or disappeared for content_link_id={candidate.content_link_id}; "
+                    f"Database row changed, is no longer dead, or disappeared for content_link_id={candidate.content_link_id}; "
                     "the uploaded URL was not recorded"
                 )
+            num_reports_after = int(result[0])
             cursor.execute(
                 """
                 UPDATE content_link_recovery_items
@@ -1201,7 +1199,7 @@ def apply_success(
                     downloaded_size = %s,
                     trimmed_size = %s,
                     trimmed_sha256 = %s,
-                    num_reports_after = 0,
+                    num_reports_after = %s,
                     finished_at = NOW(),
                     error = NULL
                 WHERE batch_id = %s AND content_link_id = %s;
@@ -1213,6 +1211,7 @@ def apply_success(
                     downloaded_size,
                     trimmed_size,
                     trimmed_sha256,
+                    num_reports_after,
                     batch_id,
                     candidate.content_link_id,
                 ),
@@ -1330,7 +1329,7 @@ def run_recovery_batch(config: RecoveryBatchConfig, *, print_candidates_output: 
         raise RuntimeError(f"{config.imgur_client_id_env} is not loaded")
 
     with psycopg.connect(get_database_url()) as connection:
-        candidates = fetch_candidates(connection, config.role_id, config.threshold, config.limit)
+        candidates = fetch_candidates(connection, config.role_id, config.limit)
         connection.commit()
         if print_candidates_output:
             print_candidates(candidates)
@@ -1384,10 +1383,9 @@ def run_recovery_batch(config: RecoveryBatchConfig, *, print_candidates_output: 
 
 
 def parse_batch_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Recover, transform, re-upload, and replace reported Imgur links.")
+    parser = argparse.ArgumentParser(description="Recover, transform, re-upload, and replace dead Imgur links.")
     parser.add_argument("--role-id", help="Only recover links for this role; omit to consider all roles")
     parser.add_argument("--limit", type=int, default=50, help="Maximum number of candidates to select (default: 50)")
-    parser.add_argument("--threshold", type=int, default=5, help="Minimum num_reports to select (default: 5)")
     parser.add_argument(
         "--apply", action="store_true", help="Perform recovery and database updates; otherwise only print candidates"
     )
@@ -1433,7 +1431,6 @@ def run_batch_cli(argv: list[str] | None = None) -> int:
         config = RecoveryBatchConfig(
             role_id=args.role_id,
             limit=args.limit,
-            threshold=args.threshold,
             guild_id=args.guild_id,
             channel_id=args.channel_id,
             auth_env=args.auth_env,
@@ -1445,7 +1442,7 @@ def run_batch_cli(argv: list[str] | None = None) -> int:
         )
         if not args.apply:
             with psycopg.connect(get_database_url()) as connection:
-                candidates = fetch_candidates(connection, config.role_id, config.threshold, config.limit)
+                candidates = fetch_candidates(connection, config.role_id, config.limit)
             print_candidates(candidates)
             print("Dry run only; pass --apply to recover, upload, and update rows.")
             return 0

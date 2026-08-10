@@ -1,7 +1,5 @@
 from collections import defaultdict, deque
 
-import psycopg
-
 from src.config.constants import (
     INITIAL_REACT_CAP,
     RECENTLY_SENT_QUEUE_SIZE,
@@ -107,7 +105,8 @@ def get_latest_links_for_roles(
                     FROM bday
                     JOIN content_links cl
                     ON bday.role_id = cl.role_id
-                    WHERE cl.num_reports < %s
+                    WHERE NOT cl.is_dead
+                    AND cl.num_reports < %s
                     AND cl.uploaded_date > bday.birthday + %s::INTERVAL
                     ORDER BY cl.uploaded_date DESC
                     LIMIT %s OFFSET %s
@@ -160,7 +159,8 @@ def get_random_link_for_each_role(
                         AS row_num
                     FROM bday
                     JOIN content_links cl ON bday.role_id = cl.role_id
-                    WHERE cl.num_reports < %s
+                    WHERE NOT cl.is_dead
+                    AND cl.num_reports < %s
                     AND (%s OR cl.url != ALL(%s))
                     AND cl.uploaded_date > bday.birthday + %s::INTERVAL
                 )
@@ -230,15 +230,18 @@ def update_given_emote_counts(role_id: str, url: str, count_by_emoji: dict[str, 
         print(f"Updated feedback for {role_id} {url}: {(upvote_count, report_count)}")
 
 
-def report_broken_link_url(url: str) -> None:
-    """Given a broken URL, remove it from database by increasing its report count by threshold."""
+def mark_url_dead(url: str) -> int:
+    """Mark every role using an unavailable URL as dead without changing user reports."""
+
     with POOL.connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """
                 UPDATE content_links
-                SET num_reports = num_reports + %s
-                WHERE url = %s;
+                SET is_dead = TRUE
+                WHERE url = %s
+                  AND is_dead = FALSE;
                 """,
-                (REPORT_THRESHOLD, url),
+                (url,),
             )
+            return cur.rowcount

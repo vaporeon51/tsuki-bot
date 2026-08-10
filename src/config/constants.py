@@ -6,7 +6,7 @@ TSUKI_HARAM_HUG = "💕"
 # Number of seconds to wait before updating db based on reactions
 REACT_WAIT_SEC = 3 * 60
 
-# Number of reports to eliminate a role + link combination from being shown
+# Number of user reports to hide a role + link combination.
 REPORT_THRESHOLD = 5
 
 # 20x net upvotes translates to 2x the probability so log(2)/log(20)
