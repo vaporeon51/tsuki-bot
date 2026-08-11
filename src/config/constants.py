@@ -34,3 +34,6 @@ CONTENT_RECOVERY_BATCH_SIZE = 60
 CONTENT_RECOVERY_INTERVAL_SECONDS = 75 * 60
 CONTENT_RECOVERY_UPLOAD_INTERVAL = 2.0
 CONTENT_RECOVERY_MAX_UPLOADS_PER_HOUR = 100
+# A replacement removes 1, 3, 5, then 7 leading frames at generations 1–4.
+# Generation 4 is the final permitted replacement.
+CONTENT_RECOVERY_MAX_GENERATION = 4

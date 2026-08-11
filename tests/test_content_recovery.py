@@ -9,10 +9,14 @@ from src import content_recovery
 class ContentRecoveryTests(unittest.TestCase):
     def test_frames_to_drop_accounts_for_the_source_generation(self) -> None:
         self.assertEqual(content_recovery.frames_to_drop(1, 0), 1)
-        self.assertEqual(content_recovery.frames_to_drop(2, 0), 2)
-        self.assertEqual(content_recovery.frames_to_drop(3, 2), 1)
+        self.assertEqual(content_recovery.frames_to_drop(2, 0), 3)
+        self.assertEqual(content_recovery.frames_to_drop(3, 0), 5)
+        self.assertEqual(content_recovery.frames_to_drop(4, 0), 7)
+        self.assertEqual(content_recovery.frames_to_drop(3, 2), 2)
         with self.assertRaises(ValueError):
             content_recovery.frames_to_drop(2, 2)
+        with self.assertRaises(ValueError):
+            content_recovery.frames_to_drop(5, 0)
 
     @patch("src.content_recovery.shutil.which", return_value="/usr/bin/ffmpeg")
     @patch("src.content_recovery.subprocess.run")

@@ -1,6 +1,7 @@
 from collections import defaultdict, deque
 
 from src.config.constants import (
+    CONTENT_RECOVERY_MAX_GENERATION,
     INITIAL_REACT_CAP,
     RECENTLY_SENT_QUEUE_SIZE,
     REPORT_EMOTE,
@@ -239,10 +240,10 @@ def mark_url_dead(url: str) -> int:
                 """
                 UPDATE content_links
                 SET is_dead = TRUE,
-                    is_recovery_exhausted = FALSE
+                    is_recovery_exhausted = recovery_generation >= %s
                 WHERE url = %s
                   AND is_dead = FALSE;
                 """,
-                (url,),
+                (CONTENT_RECOVERY_MAX_GENERATION, url),
             )
             return cur.rowcount

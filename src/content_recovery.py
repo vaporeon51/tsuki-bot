@@ -42,6 +42,7 @@ from psycopg.rows import dict_row
 
 from src.config.constants import (  # isort: skip
     CONTENT_RECOVERY_CLI_ROLE_ID,
+    CONTENT_RECOVERY_MAX_GENERATION,
     CONTENT_RECOVERY_MAX_UPLOADS_PER_HOUR,
     CONTENT_RECOVERY_UPLOAD_INTERVAL,
 )
@@ -1097,7 +1098,7 @@ def fetch_candidates(connection: psycopg.Connection[Any], role_id: str | None, l
         raise ValueError("--role-id must contain only digits")
 
     role_filter = ""
-    params: list[object] = []
+    params: list[object] = [CONTENT_RECOVERY_MAX_GENERATION]
     if role_id:
         role_filter = "AND role_id = %s"
         params.append(role_id)
@@ -1117,6 +1118,7 @@ def fetch_candidates(connection: psycopg.Connection[Any], role_id: str | None, l
         FROM content_links
         WHERE is_dead = TRUE
           AND is_recovery_exhausted = FALSE
+          AND recovery_generation < %s
           AND url ILIKE '%%imgur.com/%%'
           {role_filter}
         ORDER BY initial_reaction_count DESC, num_reports DESC, uploaded_date ASC, content_link_id ASC
@@ -1192,8 +1194,22 @@ def recovery_sources(connection: psycopg.Connection[Any], candidate: Candidate) 
     return sources
 
 
+def cumulative_frames_removed(generation: int) -> int:
+    """Return the leading frames a generation removes from the original media."""
+
+    if generation < 0 or generation > CONTENT_RECOVERY_MAX_GENERATION:
+        raise ValueError(
+            f"recovery generation must be between 0 and {CONTENT_RECOVERY_MAX_GENERATION}"
+        )
+    return 0 if generation == 0 else generation * 2 - 1
+
+
 def frames_to_drop(target_generation: int, source_generation: int) -> int:
-    frames = target_generation - source_generation
+    """Return the additional trim needed to turn one generation into another."""
+
+    frames = cumulative_frames_removed(target_generation) - cumulative_frames_removed(
+        source_generation
+    )
     if frames < 1:
         raise ValueError("recovery source generation must precede the target generation")
     return frames
@@ -1429,6 +1445,12 @@ def process_candidate(
     batch_id: str,
 ) -> None:
     """Recover, trim, upload, and record a single candidate."""
+
+    if candidate.recovery_generation >= CONTENT_RECOVERY_MAX_GENERATION:
+        raise ValueError(
+            f"content_link_id={candidate.content_link_id} is already at the recovery generation cap "
+            f"({CONTENT_RECOVERY_MAX_GENERATION})"
+        )
 
     downloaded: DownloadedMedia | None = None
     trimmed: Path | None = None
