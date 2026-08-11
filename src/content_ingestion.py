@@ -1,4 +1,4 @@
-"""Shared Discord content-message classification for live updates and backfills."""
+"""Classify Discord content messages for the live updater."""
 
 import re
 from collections import OrderedDict

@@ -52,29 +52,22 @@ def content_link_params(link: ContentLinkDraft, processed_date: datetime) -> tup
     )
 
 
-def insert_with_cursor(cursor: psycopg.Cursor[Any], processed_date: datetime, links: Sequence[ContentLinkDraft]) -> int:
+def _insert_content_links(
+    cursor: psycopg.Cursor[Any], processed_date: datetime, links: Sequence[ContentLinkDraft]
+) -> int:
     if not links:
         return 0
     cursor.executemany(INSERT_CONTENT_LINK, (content_link_params(link, processed_date) for link in links))
     return cursor.rowcount
 
 
-def insert_content_links(processed_date: datetime, links: list[ContentLinkDraft]) -> int:
-    """Insert source-attributed links once; safe to repeat after an interrupted backfill."""
-
-    with POOL.connection() as connection:
-        with connection.transaction():
-            with connection.cursor() as cursor:
-                return insert_with_cursor(cursor, processed_date, links)
-
-
 def persist_content_update(processed_date: datetime, last_message_id: str, links: list[ContentLinkDraft]) -> int:
-    """Atomically insert links and advance the live Discord cursor."""
+    """Atomically insert one page of links and advance the live Discord cursor."""
 
     with POOL.connection() as connection:
         with connection.transaction():
             with connection.cursor() as cursor:
-                inserted_count = insert_with_cursor(cursor, processed_date, links)
+                inserted_count = _insert_content_links(cursor, processed_date, links)
                 cursor.execute(
                     """
                     INSERT INTO update_log (processed_date, last_message_id, rows_inserted)
@@ -83,5 +76,4 @@ def persist_content_update(processed_date: datetime, last_message_id: str, links
                     (processed_date, last_message_id, inserted_count),
                 )
 
-    print(f"Finished writing {inserted_count} content links and updated the live cursor.")
     return inserted_count

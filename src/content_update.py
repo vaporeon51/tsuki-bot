@@ -9,34 +9,45 @@ async def run_content_links_update() -> None:
     """Ingest new content messages and their safe continuations from Discord."""
 
     print("Starting content update...")
-    processed_date = datetime.now()
     last_message_id = await asyncio.to_thread(content_update_db.get_latest_message_id)
-    classifier = content_ingestion.ContentMessageClassifier()
-    new_links: list[content_ingestion.ContentLinkDraft] = []
-    processed_messages = False
+    new_messages = await asyncio.to_thread(content_discord.get_messages_after, last_message_id)
+    if not new_messages:
+        print("Completed content updates: no new messages.")
+        return
 
+    classifier = content_ingestion.ContentMessageClassifier()
     context_messages = await asyncio.to_thread(content_discord.get_messages_around, last_message_id)
-    for message in sorted(context_messages, key=lambda item: item["timestamp"]):
+    for message in sorted(context_messages, key=lambda item: int(item["id"])):
         if int(message["id"]) <= int(last_message_id):
             classifier.consume(message)
 
+    processed_messages = 0
+    inserted_links = 0
     while True:
-        new_messages = await asyncio.to_thread(content_discord.get_messages_after, last_message_id)
-        if not new_messages:
-            break
-        new_messages.sort(key=lambda message: message["timestamp"])
+        new_messages.sort(key=lambda message: int(message["id"]))
+        page_links: list[content_ingestion.ContentLinkDraft] = []
         for message in new_messages:
             try:
-                new_links.extend(classifier.consume(message))
+                page_links.extend(classifier.consume(message))
             except Exception:
                 print(f"Error with content update on message {message.get('id', 'unknown')}.")
                 raise
-        processed_messages = True
+
         last_message_id = str(new_messages[-1]["id"])
-        print(f"Processed up to {new_messages[-1]['timestamp']}. Total so far: {len(new_links)}.")
+        inserted_links += await asyncio.to_thread(
+            content_update_db.persist_content_update,
+            datetime.now(),
+            last_message_id,
+            page_links,
+        )
+        processed_messages += len(new_messages)
+        print(
+            f"Processed {processed_messages:,} messages through {new_messages[-1]['timestamp']}; "
+            f"inserted={inserted_links:,}."
+        )
         await asyncio.sleep(content_discord.REQUEST_DELAY_SECONDS)
+        new_messages = await asyncio.to_thread(content_discord.get_messages_after, last_message_id)
+        if not new_messages:
+            break
 
-    if processed_messages:
-        await asyncio.to_thread(content_update_db.persist_content_update, processed_date, last_message_id, new_links)
-
-    print("Completed content updates.")
+    print(f"Completed content updates: messages={processed_messages:,} inserted={inserted_links:,}.")
