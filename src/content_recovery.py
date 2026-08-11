@@ -42,6 +42,7 @@ from psycopg.rows import dict_row
 
 from src.config.constants import (  # isort: skip
     CONTENT_RECOVERY_CLI_ROLE_ID,
+    CONTENT_RECOVERY_MAX_GENERATION,
     CONTENT_RECOVERY_MAX_UPLOADS_PER_HOUR,
     CONTENT_RECOVERY_UPLOAD_INTERVAL,
 )
@@ -97,14 +98,16 @@ def trimmed_output_path(input_path: Path, force: bool) -> Path:
         counter += 1
 
 
-def trim_first_frame(input_path: Path, force: bool) -> Path:
-    """Remove only the first video frame and return a new MP4 path."""
+def trim_leading_frames(input_path: Path, frames_to_drop: int, force: bool) -> Path:
+    """Remove a positive number of leading video frames and return a new MP4 path."""
 
     if shutil.which("ffmpeg") is None:
         raise RuntimeError("ffmpeg is required for the frame-trimming pipeline step")
     if input_path.suffix.lower() not in VIDEO_EXTENSIONS:
         suffix = input_path.suffix.lower() or "unknown media"
         raise UnrecoverableMediaError(f"First-frame trimming requires video media; recovered file is {suffix}")
+    if frames_to_drop < 1:
+        raise ValueError("frames_to_drop must be at least 1")
 
     output_path = trimmed_output_path(input_path, force)
     temporary_path = output_path.with_name(f".{output_path.stem}.part.mp4")
@@ -126,7 +129,7 @@ def trim_first_frame(input_path: Path, force: bool) -> Path:
         "-i",
         str(input_path),
         "-vf",
-        "select='gte(n,1)',setpts=N/FRAME_RATE/TB",
+        f"select='gte(n,{frames_to_drop})',setpts=N/FRAME_RATE/TB",
         "-map",
         "0:v:0",
         "-map",
@@ -165,6 +168,12 @@ def trim_first_frame(input_path: Path, force: bool) -> Path:
         raise RuntimeError(f"Could not trim the first frame: {detail}") from error
 
     return output_path
+
+
+def trim_first_frame(input_path: Path, force: bool) -> Path:
+    """Remove the first video frame; retained for the single-URL CLI."""
+
+    return trim_leading_frames(input_path, 1, force)
 
 
 def parse_single_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -1041,6 +1050,8 @@ class Candidate:
     content_link_id: int
     role_id: str
     url: str
+    original_url: str | None
+    recovery_generation: int
     num_reports: int
     initial_reaction_count: int
     author: str | None
@@ -1063,6 +1074,14 @@ class RecoveryBatchConfig:
     max_uploads_per_hour: int = CONTENT_RECOVERY_MAX_UPLOADS_PER_HOUR
 
 
+@dataclass(frozen=True)
+class RecoverySource:
+    """A recoverable URL and the number of frames already removed from it."""
+
+    url: str
+    generation: int
+
+
 def get_database_url() -> str:
     database_url = os.getenv("DATABASE_URL", "").strip()
     if not database_url:
@@ -1079,7 +1098,7 @@ def fetch_candidates(connection: psycopg.Connection[Any], role_id: str | None, l
         raise ValueError("--role-id must contain only digits")
 
     role_filter = ""
-    params: list[object] = []
+    params: list[object] = [CONTENT_RECOVERY_MAX_GENERATION]
     if role_id:
         role_filter = "AND role_id = %s"
         params.append(role_id)
@@ -1090,6 +1109,8 @@ def fetch_candidates(connection: psycopg.Connection[Any], role_id: str | None, l
             content_link_id,
             role_id,
             url,
+            original_url,
+            recovery_generation,
             num_reports,
             COALESCE(initial_reaction_count, 0) AS initial_reaction_count,
             author,
@@ -1097,6 +1118,7 @@ def fetch_candidates(connection: psycopg.Connection[Any], role_id: str | None, l
         FROM content_links
         WHERE is_dead = TRUE
           AND is_recovery_exhausted = FALSE
+          AND recovery_generation < %s
           AND url ILIKE '%%imgur.com/%%'
           {role_filter}
         ORDER BY initial_reaction_count DESC, num_reports DESC, uploaded_date ASC, content_link_id ASC
@@ -1110,6 +1132,8 @@ def fetch_candidates(connection: psycopg.Connection[Any], role_id: str | None, l
             content_link_id=int(row["content_link_id"]),
             role_id=str(row["role_id"]),
             url=str(row["url"]),
+            original_url=(str(row["original_url"]) if row["original_url"] is not None else None),
+            recovery_generation=int(row["recovery_generation"]),
             num_reports=int(row["num_reports"]),
             initial_reaction_count=int(row["initial_reaction_count"]),
             author=row["author"],
@@ -1133,10 +1157,62 @@ def start_recovery_item(connection: psycopg.Connection[Any], batch_id: str, cand
                 (
                     batch_id,
                     candidate.content_link_id,
-                    candidate.url,
+                    candidate.original_url or candidate.url,
                     candidate.num_reports,
                 ),
             )
+
+
+def recovery_sources(connection: psycopg.Connection[Any], candidate: Candidate) -> list[RecoverySource]:
+    """Prefer the canonical original, then prior generated replacements as backups."""
+
+    sources = [RecoverySource(candidate.original_url or candidate.url, 0)]
+    with connection.cursor(row_factory=dict_row) as cursor:
+        cursor.execute(
+            """
+            SELECT replacement_url, replacement_generation
+            FROM content_link_recovery_items
+            WHERE content_link_id = %s
+              AND status = 'updated'
+              AND replacement_url IS NOT NULL
+            ORDER BY replacement_generation DESC NULLS LAST, finished_at DESC NULLS LAST, started_at DESC;
+            """,
+            (candidate.content_link_id,),
+        )
+        rows = cursor.fetchall()
+
+    seen = {sources[0].url}
+    for row in rows:
+        url = row["replacement_url"]
+        generation = row["replacement_generation"]
+        if not isinstance(url, str) or not url or url in seen:
+            continue
+        if not isinstance(generation, int) or generation < 0 or generation > candidate.recovery_generation:
+            continue
+        seen.add(url)
+        sources.append(RecoverySource(url, generation))
+    return sources
+
+
+def cumulative_frames_removed(generation: int) -> int:
+    """Return the leading frames a generation removes from the original media."""
+
+    if generation < 0 or generation > CONTENT_RECOVERY_MAX_GENERATION:
+        raise ValueError(
+            f"recovery generation must be between 0 and {CONTENT_RECOVERY_MAX_GENERATION}"
+        )
+    return 0 if generation == 0 else generation * 2 - 1
+
+
+def frames_to_drop(target_generation: int, source_generation: int) -> int:
+    """Return the additional trim needed to turn one generation into another."""
+
+    frames = cumulative_frames_removed(target_generation) - cumulative_frames_removed(
+        source_generation
+    )
+    if frames < 1:
+        raise ValueError("recovery source generation must precede the target generation")
+    return frames
 
 
 def update_recovery_item(
@@ -1268,6 +1344,7 @@ def apply_success(
     trimmed_size: int,
     trimmed_sha256: str,
     imgur_id: str,
+    replacement_generation: int,
 ) -> None:
     """Atomically replace a dead link while preserving its user report count."""
 
@@ -1278,6 +1355,7 @@ def apply_success(
                 UPDATE content_links
                 SET original_url = COALESCE(original_url, %s),
                     url = %s,
+                    recovery_generation = %s,
                     is_dead = FALSE,
                     is_recovery_exhausted = FALSE,
                     processed_date = NOW()
@@ -1289,6 +1367,7 @@ def apply_success(
                 (
                     candidate.url,
                     replacement_url,
+                    replacement_generation,
                     candidate.content_link_id,
                     candidate.url,
                 ),
@@ -1310,6 +1389,7 @@ def apply_success(
                     downloaded_size = %s,
                     trimmed_size = %s,
                     trimmed_sha256 = %s,
+                    replacement_generation = %s,
                     num_reports_after = %s,
                     finished_at = NOW(),
                     error = NULL
@@ -1322,6 +1402,7 @@ def apply_success(
                     downloaded_size,
                     trimmed_size,
                     trimmed_sha256,
+                    replacement_generation,
                     num_reports_after,
                     batch_id,
                     candidate.content_link_id,
@@ -1365,6 +1446,12 @@ def process_candidate(
 ) -> None:
     """Recover, trim, upload, and record a single candidate."""
 
+    if candidate.recovery_generation >= CONTENT_RECOVERY_MAX_GENERATION:
+        raise ValueError(
+            f"content_link_id={candidate.content_link_id} is already at the recovery generation cap "
+            f"({CONTENT_RECOVERY_MAX_GENERATION})"
+        )
+
     downloaded: DownloadedMedia | None = None
     trimmed: Path | None = None
     uploaded: UploadedMedia | None = None
@@ -1391,19 +1478,41 @@ def process_candidate(
     with tempfile.TemporaryDirectory(prefix=f"content-recovery-{candidate.content_link_id}-") as temporary_dir:
         row_output_dir = Path(temporary_dir)
         try:
-            downloaded = recover_content(
-                media_client,
-                config.auth_env,
-                config.guild_id,
-                config.channel_id,
-                candidate.url,
-                extract_imgur_id(candidate.url),
-                row_output_dir,
-                config.max_pages,
+            target_generation = candidate.recovery_generation + 1
+            recovery_errors: list[str] = []
+            source_generation = 0
+            for source in recovery_sources(connection, candidate):
+                try:
+                    source_media_id = extract_imgur_id(source.url)
+                    if source.generation == 0:
+                        downloaded = recover_content(
+                            media_client,
+                            config.auth_env,
+                            config.guild_id,
+                            config.channel_id,
+                            source.url,
+                            source_media_id,
+                            row_output_dir,
+                            config.max_pages,
+                            True,
+                            config.history_fallback,
+                        )
+                    else:
+                        downloaded = recover_direct_imgur(media_client, source_media_id, row_output_dir, True)
+                        if downloaded is None:
+                            raise UnrecoverableMediaError("prior generated replacement is no longer downloadable")
+                    source_generation = source.generation
+                    break
+                except UnrecoverableMediaError as error:
+                    recovery_errors.append(f"{source.url}: {error}")
+            if downloaded is None:
+                raise UnrecoverableMediaError("; ".join(recovery_errors))
+
+            trimmed = trim_leading_frames(
+                downloaded.path,
+                frames_to_drop(target_generation, source_generation),
                 True,
-                config.history_fallback,
             )
-            trimmed = trim_first_frame(downloaded.path, True)
             trimmed_sha256 = sha256(trimmed)
             uploaded = imgur_client.upload(trimmed)
             imgur_client.verify_direct_url(uploaded.url)
@@ -1417,6 +1526,7 @@ def process_candidate(
                 trimmed.stat().st_size,
                 trimmed_sha256,
                 uploaded.media_id,
+                target_generation,
             )
         except ImgurRateLimitError as error:
             mark_failure("rate_limited", str(error))
@@ -1446,6 +1556,10 @@ def run_recovery_batch(config: RecoveryBatchConfig, *, print_candidates_output: 
     with psycopg.connect(get_database_url()) as connection:
         candidates = fetch_candidates(connection, config.role_id, config.limit)
         connection.commit()
+        print(
+            f"Content recovery starting: selected={len(candidates)} limit={config.limit} "
+            f"role_id={config.role_id or 'all'}"
+        )
         if print_candidates_output:
             print_candidates(candidates)
         if not candidates:
@@ -1533,6 +1647,11 @@ def parse_batch_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Perform recovery and database updates; otherwise only print candidates",
     )
     parser.add_argument(
+        "--quiet-candidates",
+        action="store_true",
+        help="Do not print the selected candidate table before processing",
+    )
+    parser.add_argument(
         "--channel-id",
         default=DEFAULT_CHANNEL_ID,
         help=f"Discord channel to search (default: {DEFAULT_CHANNEL_ID})",
@@ -1602,7 +1721,7 @@ def run_batch_cli(argv: list[str] | None = None) -> int:
             print_candidates(candidates)
             print("Dry run only; pass --apply to recover, upload, and update rows.")
             return 0
-        run_recovery_batch(config)
+        run_recovery_batch(config, print_candidates_output=not args.quiet_candidates)
         return 0
     except (RuntimeError, ValueError, psycopg.Error) as error:
         print(f"Batch recovery failed: {error}", file=sys.stderr)
