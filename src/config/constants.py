@@ -26,6 +26,7 @@ REDDIT_FEED_WINDOW = 5 * 60
 
 # Max attachments for reddit feed
 REDDIT_MAX_ATTACHMENTS = 10
+REDDIT_MAX_ATTACHMENT_BYTES = 100 * 1024 * 1024
 
 # Content recovery scheduler and conservative Imgur upload budget.
 CONTENT_RECOVERY_CLI_ROLE_ID = "1000863360776147054"

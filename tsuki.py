@@ -1,6 +1,7 @@
 import asyncio
 import os
 import random
+import sys
 from pathlib import Path
 
 import discord
@@ -27,7 +28,6 @@ from src.config.constants import (
     TSUKI_NOM,
     UPVOTE_EMOTE,
 )
-from src.content_recovery import RecoveryBatchConfig, run_recovery_batch
 from src.content_update import run_content_links_update
 from src.db.bias_rater import (
     cleanup_accumulating_tables,
@@ -165,22 +165,35 @@ async def recover_content_loop():
         print("Skipping content recovery: IMGUR_CLIENT_ID is not configured.")
         return
 
-    config = RecoveryBatchConfig(
-        limit=CONTENT_RECOVERY_BATCH_SIZE,
-        upload_interval=CONTENT_RECOVERY_UPLOAD_INTERVAL,
-        max_uploads_per_hour=CONTENT_RECOVERY_MAX_UPLOADS_PER_HOUR,
-    )
+    command = [
+        sys.executable,
+        str(WEB_APP_PATH / "scripts" / "recover_content.py"),
+        "batch",
+        "--role-id",
+        "",
+        "--limit",
+        str(CONTENT_RECOVERY_BATCH_SIZE),
+        "--upload-interval",
+        str(CONTENT_RECOVERY_UPLOAD_INTERVAL),
+        "--max-uploads-per-hour",
+        str(CONTENT_RECOVERY_MAX_UPLOADS_PER_HOUR),
+        "--quiet-candidates",
+        "--apply",
+    ]
+    child_environment = os.environ.copy()
+    child_environment.setdefault("MALLOC_ARENA_MAX", "2")
     try:
-        summary = await asyncio.to_thread(run_recovery_batch, config, print_candidates_output=False)
-        print(
-            "Content recovery finished: "
-            f"selected={summary['selected_count']} "
-            f"succeeded={summary['succeeded_count']} "
-            f"failed={summary['failed_count']} "
-            f"unrecoverable={summary['unrecoverable_count']} "
-            f"rate_limited={summary['rate_limited_count']} "
-            f"skipped={summary['skipped_count']}"
+        print("Starting isolated content recovery process.")
+        process = await asyncio.create_subprocess_exec(
+            *command,
+            cwd=WEB_APP_PATH,
+            env=child_environment,
         )
+        return_code = await process.wait()
+        if return_code == 0:
+            print("Isolated content recovery process finished successfully.")
+        else:
+            print(f"Isolated content recovery process exited with status {return_code}.")
     except Exception as e:
         print(f"Error with content recovery: {e}")
 

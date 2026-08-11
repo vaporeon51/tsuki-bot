@@ -1537,6 +1537,11 @@ def parse_batch_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Perform recovery and database updates; otherwise only print candidates",
     )
     parser.add_argument(
+        "--quiet-candidates",
+        action="store_true",
+        help="Do not print the selected candidate table before processing",
+    )
+    parser.add_argument(
         "--channel-id",
         default=DEFAULT_CHANNEL_ID,
         help=f"Discord channel to search (default: {DEFAULT_CHANNEL_ID})",
@@ -1606,7 +1611,7 @@ def run_batch_cli(argv: list[str] | None = None) -> int:
             print_candidates(candidates)
             print("Dry run only; pass --apply to recover, upload, and update rows.")
             return 0
-        run_recovery_batch(config)
+        run_recovery_batch(config, print_candidates_output=not args.quiet_candidates)
         return 0
     except (RuntimeError, ValueError, psycopg.Error) as error:
         print(f"Batch recovery failed: {error}", file=sys.stderr)

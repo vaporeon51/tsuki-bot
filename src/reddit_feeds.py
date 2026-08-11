@@ -1,9 +1,10 @@
 import asyncio
-import io
 import os
+import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from html import unescape
+from pathlib import Path
 from urllib.parse import urlparse
 
 import asyncpraw
@@ -13,7 +14,7 @@ import discord
 import requests
 from discord.ext import commands
 
-from src.config.constants import REDDIT_MAX_ATTACHMENTS
+from src.config.constants import REDDIT_MAX_ATTACHMENT_BYTES, REDDIT_MAX_ATTACHMENTS
 from src.db.reddit_feeds import get_feed_configs, unset_subreddit_feeds
 
 REDDIT_CLIENT_ID = os.environ["REDDIT_CLIENT_ID"]
@@ -120,22 +121,47 @@ async def get_latest_posts(subreddit: str) -> list[asyncpraw.models.Submission]:
         await reddit.close()
 
 
-def get_image_files(urls: list[str]) -> list[discord.File]:
-    """Download reddit images and turn them into discord file attachments."""
-    results = []
-    for url in urls[:REDDIT_MAX_ATTACHMENTS]:
+def get_media_files(urls: list[str], output_dir: Path) -> list[discord.File]:
+    """Stream Reddit media to temporary files and open Discord attachments."""
+
+    results: list[discord.File] = []
+    output_dir.mkdir(parents=True, exist_ok=True)
+    for index, url in enumerate(urls[:REDDIT_MAX_ATTACHMENTS]):
+        output_path: Path | None = None
         try:
-            response = requests.get(url, timeout=10)
-            if response.status_code == 200:
-                image_data = io.BytesIO(response.content)
-                parsed_url = urlparse(url)
-                filename = parsed_url.path.split("/")[-1]
-                results.append(discord.File(fp=image_data, filename=filename))
-            else:
-                print(f"Failed to get url: {url}. Status: {response.status_code}")
+            filename = Path(urlparse(url).path).name or f"reddit-media-{index}"
+            output_path = output_dir / f"{index}-{filename}"
+            with requests.get(url, stream=True, timeout=(10, 60)) as response:
+                if response.status_code != 200:
+                    print(f"Failed to get url: {url}. Status: {response.status_code}")
+                    continue
+
+                content_length = response.headers.get("Content-Length")
+                if content_length and content_length.isdigit() and int(content_length) > REDDIT_MAX_ATTACHMENT_BYTES:
+                    print(f"Skipped oversized Reddit attachment: {url}")
+                    continue
+
+                downloaded_bytes = 0
+                with output_path.open("wb") as output_file:
+                    for chunk in response.iter_content(chunk_size=1024 * 1024):
+                        if not chunk:
+                            continue
+                        downloaded_bytes += len(chunk)
+                        if downloaded_bytes > REDDIT_MAX_ATTACHMENT_BYTES:
+                            raise ValueError("attachment exceeds the download safety limit")
+                        output_file.write(chunk)
+
+            results.append(discord.File(fp=output_path, filename=filename))
         except Exception as e:
             print(f"Error fetching URL {url}: {e}")
+            if output_path is not None:
+                output_path.unlink(missing_ok=True)
     return results
+
+
+def close_media_files(files: list[discord.File]) -> None:
+    for media_file in files:
+        media_file.close()
 
 
 def parse_post(post: asyncpraw.models.Submission) -> RedditPost:
@@ -211,11 +237,18 @@ async def update_reddit_feeds(bot: commands.Bot, lookback_secs: int) -> None:
                     for post in posts_by_subreddit.get(subreddit, []):
                         text = f"[r/{subreddit}] **{post.title}**"
                         if post.is_gallery:
-                            images = await asyncio.to_thread(get_image_files, post.media_urls)
-                            await channel.send(text, files=images)
+                            with tempfile.TemporaryDirectory(prefix="reddit-feed-") as temporary_dir:
+                                files = await asyncio.to_thread(get_media_files, post.media_urls, Path(temporary_dir))
+                                try:
+                                    if files:
+                                        await channel.send(text, files=files)
+                                    else:
+                                        await channel.send(text)
+                                finally:
+                                    close_media_files(files)
                         else:
                             await channel.send(text)
                             await channel.send(post.media_urls[0])
-        except Exception as e:
+        except Exception:
             print(f"Error with sending post ({guild_id}, {channel_id}, {subreddit})")
     print(f"Update complete with {num_new_posts} posts.")
