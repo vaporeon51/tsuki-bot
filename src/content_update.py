@@ -10,16 +10,25 @@ async def run_content_links_update() -> None:
 
     print("Starting content update...")
     last_message_id = await asyncio.to_thread(content_update_db.get_latest_message_id)
-    new_messages = await asyncio.to_thread(content_discord.get_messages_after, last_message_id)
-    if not new_messages:
-        print("Completed content updates: no new messages.")
-        return
-
     classifier = content_ingestion.ContentMessageClassifier()
     context_messages = await asyncio.to_thread(content_discord.get_messages_around, last_message_id)
+    recent_links: list[content_ingestion.ContentLinkDraft] = []
     for message in sorted(context_messages, key=lambda item: int(item["id"])):
         if int(message["id"]) <= int(last_message_id):
-            classifier.consume(message)
+            recent_links.extend(classifier.consume(message))
+
+    reconciled_links = 0
+    if recent_links:
+        reconciled_links = await asyncio.to_thread(
+            content_update_db.reconcile_content_links,
+            datetime.now(),
+            recent_links,
+        )
+
+    new_messages = await asyncio.to_thread(content_discord.get_messages_after, last_message_id)
+    if not new_messages:
+        print(f"Completed content updates: no new messages; reconciled={reconciled_links:,}.")
+        return
 
     processed_messages = 0
     inserted_links = 0
@@ -50,4 +59,7 @@ async def run_content_links_update() -> None:
         if not new_messages:
             break
 
-    print(f"Completed content updates: messages={processed_messages:,} inserted={inserted_links:,}.")
+    print(
+        f"Completed content updates: messages={processed_messages:,} "
+        f"inserted={inserted_links:,} reconciled={reconciled_links:,}."
+    )

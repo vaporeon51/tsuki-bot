@@ -144,6 +144,37 @@ class ContentMessageClassifierTests(unittest.TestCase):
 
         self.assertEqual(len(links), 1)
 
+    def test_animated_image_embed_is_ingested(self) -> None:
+        animated_image_root = self.root | {
+            "content": "<@&role-1>\nhttps://cdn.example.com/content.webp",
+            "embeds": [
+                {
+                    "type": "image",
+                    "url": "https://cdn.example.com/content.webp",
+                    "thumbnail": {"flags": content_ingestion.ANIMATED_MEDIA_FLAG},
+                }
+            ],
+        }
+
+        links = self.classifier.consume(animated_image_root)
+
+        self.assertEqual([link.url for link in links], ["https://cdn.example.com/content.webp"])
+        self.assertEqual([link.source_kind for link in links], [content_ingestion.ROOT])
+
+    def test_still_image_embed_is_not_ingested(self) -> None:
+        still_image_root = self.root | {
+            "content": "<@&role-1>\nhttps://cdn.example.com/content.webp",
+            "embeds": [
+                {
+                    "type": "image",
+                    "url": "https://cdn.example.com/content.webp",
+                    "thumbnail": {"flags": 0},
+                }
+            ],
+        }
+
+        self.assertEqual(self.classifier.consume(still_image_root), [])
+
     def test_reply_context_cache_is_bounded(self) -> None:
         classifier = content_ingestion.ContentMessageClassifier(context_cache_size=1)
         classifier.consume(self.root)

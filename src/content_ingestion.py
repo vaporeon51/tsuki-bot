@@ -6,7 +6,8 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, Literal
 
-SUPPORTED_EMBED_TYPES = frozenset({"gifv", "video"})
+SUPPORTED_VIDEO_EMBED_TYPES = frozenset({"gifv", "video"})
+ANIMATED_MEDIA_FLAG = 1 << 5
 URL_PATTERN = re.compile(r"https?://[^\s<>]+", re.IGNORECASE)
 ROOT: Literal["root"] = "root"
 REPLY_CONTINUATION: Literal["reply_continuation"] = "reply_continuation"
@@ -39,18 +40,32 @@ class ContentContext:
 
 
 def media_urls(message: dict[str, Any]) -> list[str]:
-    """Return unique media URLs using the same embed types as the legacy updater."""
+    """Return unique URLs from video embeds and explicitly animated image embeds."""
 
     urls: list[str] = []
     seen: set[str] = set()
     for embed in message.get("embeds", []):
-        if not isinstance(embed, dict) or embed.get("type") not in SUPPORTED_EMBED_TYPES:
+        if not isinstance(embed, dict):
+            continue
+        embed_type = embed.get("type")
+        if embed_type not in SUPPORTED_VIDEO_EMBED_TYPES and not _is_animated_image_embed(embed):
             continue
         url = embed.get("url")
         if isinstance(url, str) and url and url not in seen:
             seen.add(url)
             urls.append(url)
     return urls
+
+
+def _is_animated_image_embed(embed: dict[str, Any]) -> bool:
+    if embed.get("type") != "image":
+        return False
+    for field in ("image", "thumbnail"):
+        media = embed.get(field)
+        flags = media.get("flags") if isinstance(media, dict) else None
+        if isinstance(flags, int) and flags & ANIMATED_MEDIA_FLAG:
+            return True
+    return False
 
 
 def role_mentions(message: dict[str, Any]) -> tuple[str, ...]:

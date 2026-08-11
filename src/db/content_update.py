@@ -61,6 +61,15 @@ def _insert_content_links(
     return cursor.rowcount
 
 
+def reconcile_content_links(processed_date: datetime, links: list[ContentLinkDraft]) -> int:
+    """Insert missing links from the recent live lookback without moving its cursor."""
+
+    with POOL.connection() as connection:
+        with connection.transaction():
+            with connection.cursor() as cursor:
+                return _insert_content_links(cursor, processed_date, links)
+
+
 def persist_content_update(processed_date: datetime, last_message_id: str, links: list[ContentLinkDraft]) -> int:
     """Atomically insert one page of links and advance the live Discord cursor."""
 

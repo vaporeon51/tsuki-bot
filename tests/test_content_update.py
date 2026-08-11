@@ -26,27 +26,46 @@ def message(
 
 class ContentUpdateTests(unittest.IsolatedAsyncioTestCase):
     @patch("src.content_update.content_update_db.persist_content_update")
+    @patch("src.content_update.content_update_db.reconcile_content_links", return_value=0)
     @patch("src.content_update.content_discord.get_messages_around")
     @patch("src.content_update.content_discord.get_messages_after")
     @patch("src.content_update.content_update_db.get_latest_message_id", return_value="100")
-    async def test_no_new_messages_skips_context_and_database_write(
+    async def test_no_new_messages_reconciles_recent_context_without_advancing_cursor(
         self,
         get_latest_message_id: Mock,
         get_messages_after: Mock,
         get_messages_around: Mock,
+        reconcile_content_links: Mock,
         persist_content_update: Mock,
     ) -> None:
         get_messages_after.return_value = []
+        get_messages_around.return_value = [
+            message(
+                "100",
+                "2026-08-10T18:07:47.064000+00:00",
+                roles=["role-1"],
+                urls=["https://cdn.example.com/content.webp"],
+            )
+        ]
+        get_messages_around.return_value[0]["embeds"][0] = {
+            "type": "image",
+            "url": "https://cdn.example.com/content.webp",
+            "thumbnail": {"flags": 32},
+        }
 
         await content_update.run_content_links_update()
 
         get_latest_message_id.assert_called_once()
         get_messages_after.assert_called_once_with("100")
-        get_messages_around.assert_not_called()
+        get_messages_around.assert_called_once_with("100")
+        reconcile_content_links.assert_called_once()
+        reconciled = reconcile_content_links.call_args.args[1]
+        self.assertEqual([link.url for link in reconciled], ["https://cdn.example.com/content.webp"])
         persist_content_update.assert_not_called()
 
     @patch("src.content_update.asyncio.sleep", new_callable=AsyncMock)
     @patch("src.content_update.content_update_db.persist_content_update", side_effect=[1, 1])
+    @patch("src.content_update.content_update_db.reconcile_content_links")
     @patch("src.content_update.content_discord.get_messages_around", return_value=[])
     @patch("src.content_update.content_discord.get_messages_after")
     @patch("src.content_update.content_update_db.get_latest_message_id", return_value="100")
@@ -55,6 +74,7 @@ class ContentUpdateTests(unittest.IsolatedAsyncioTestCase):
         get_latest_message_id: Mock,
         get_messages_after: Mock,
         get_messages_around: Mock,
+        reconcile_content_links: Mock,
         persist_content_update: Mock,
         sleep: AsyncMock,
     ) -> None:
@@ -82,6 +102,7 @@ class ContentUpdateTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([link.url for link in first_write[2]], ["https://imgur.com/first"])
         self.assertEqual([link.url for link in second_write[2]], ["https://imgur.com/second"])
         self.assertEqual(sleep.await_count, 2)
+        reconcile_content_links.assert_not_called()
 
 
 if __name__ == "__main__":
