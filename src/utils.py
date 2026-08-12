@@ -1,4 +1,5 @@
 from collections import OrderedDict
+from collections.abc import Mapping
 from typing import Any, Hashable
 
 from discord import Message
@@ -27,13 +28,16 @@ class LRUCache:
             del self.cache[key]
 
 
-def is_message_broken_link(message: Message) -> bool:
+def is_message_broken_link(message: Message | Mapping[str, Any]) -> bool:
     """Determines if the message is a broken imgur link."""
 
-    if not message.embeds:
+    embeds = message.get("embeds", []) if isinstance(message, Mapping) else message.embeds
+    if not embeds:
         return True
 
-    if message.embeds[0].type == "article":
+    first_embed = embeds[0]
+    embed_type = first_embed.get("type") if isinstance(first_embed, Mapping) else first_embed.type
+    if embed_type == "article":
         return True
 
     return False
