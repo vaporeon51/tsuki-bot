@@ -40,8 +40,11 @@ import requests
 from dotenv import load_dotenv
 from psycopg.rows import dict_row
 
+from src.utils import is_message_broken_link
+
 from src.config.constants import (  # isort: skip
     CONTENT_RECOVERY_CLI_ROLE_ID,
+    CONTENT_RECOVERY_MAX_ATTEMPTS,
     CONTENT_RECOVERY_MAX_GENERATION,
     CONTENT_RECOVERY_MAX_UPLOADS_PER_HOUR,
     CONTENT_RECOVERY_UPLOAD_INTERVAL,
@@ -50,6 +53,8 @@ from src.config.constants import (  # isort: skip
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_GUILD_ID = "124767749099618304"
 DEFAULT_CHANNEL_ID = "124767749099618304"
+RECOVERY_TEST_CHANNEL_ID = "1499034597952983092"
+RECOVERY_VERIFICATION_DELAY_SECONDS = 30
 DISCORD_API_BASE = "https://discord.com/api/v10"
 IMGUR_API_BASE = "https://api.imgur.com/3"
 MEDIA_EXTENSIONS = (".mp4", ".webm", ".gif", ".jpg", ".jpeg", ".png", ".webp")
@@ -328,6 +333,76 @@ class DiscordClient:
                 response.close()
 
         raise RuntimeError("Discord request failed after retries")
+
+    def create_message(self, channel_id: str, content: str) -> dict:
+        """Post a URL for Discord to unfurl and return the created message."""
+
+        url = f"{DISCORD_API_BASE}/channels/{channel_id}/messages"
+        for attempt in range(6):
+            response = self.session.post(
+                url,
+                json={"content": content, "allowed_mentions": {"parse": []}},
+                timeout=(10, 60),
+            )
+            try:
+                if response.status_code == 429:
+                    if attempt == 5:
+                        raise RuntimeError("Discord rate-limited the test-channel post too many times")
+                    try:
+                        retry_after = float(response.json().get("retry_after", 1))
+                    except (ValueError, TypeError):
+                        retry_after = 1.0
+                    time.sleep(max(retry_after, 0.1))
+                    continue
+
+                if response.status_code == 401:
+                    raise RuntimeError("Discord rejected the bot credentials (401); check TOKEN in .env")
+                if response.status_code == 403:
+                    raise RuntimeError("Discord denied sending to the recovery test channel (403)")
+                if response.status_code == 404:
+                    raise RuntimeError(f"Discord could not find recovery test channel {channel_id} (404)")
+                response.raise_for_status()
+                message = response.json()
+                if not isinstance(message, dict) or not isinstance(message.get("id"), str):
+                    raise RuntimeError("Discord returned an unexpected create-message response")
+                return message
+            finally:
+                response.close()
+
+        raise RuntimeError("Discord test-channel post failed after retries")
+
+    def get_message(self, channel_id: str, message_id: str) -> dict:
+        """Fetch one message after Discord has had time to generate its embed."""
+
+        url = f"{DISCORD_API_BASE}/channels/{channel_id}/messages/{message_id}"
+        for attempt in range(6):
+            response = self.session.get(url, timeout=(10, 60))
+            try:
+                if response.status_code == 429:
+                    if attempt == 5:
+                        raise RuntimeError("Discord rate-limited the test-message fetch too many times")
+                    try:
+                        retry_after = float(response.json().get("retry_after", 1))
+                    except (ValueError, TypeError):
+                        retry_after = 1.0
+                    time.sleep(max(retry_after, 0.1))
+                    continue
+
+                if response.status_code == 401:
+                    raise RuntimeError("Discord rejected the bot credentials (401); check TOKEN in .env")
+                if response.status_code == 403:
+                    raise RuntimeError("Discord denied reading the recovery test channel (403)")
+                if response.status_code == 404:
+                    raise RuntimeError(f"Discord could not find test message {message_id} (404)")
+                response.raise_for_status()
+                message = response.json()
+                if not isinstance(message, dict):
+                    raise RuntimeError("Discord returned an unexpected test-message response")
+                return message
+            finally:
+                response.close()
+
+        raise RuntimeError("Discord test-message fetch failed after retries")
 
     def search_messages(self, guild_id: str, channel_id: str, content: str) -> dict:
         """Search Discord's indexed guild messages for the exact URL text."""
@@ -1067,6 +1142,8 @@ class RecoveryBatchConfig:
     guild_id: str = DEFAULT_GUILD_ID
     channel_id: str = DEFAULT_CHANNEL_ID
     auth_env: str | None = None
+    verification_channel_id: str = RECOVERY_TEST_CHANNEL_ID
+    verification_auth_env: str = "TOKEN"
     max_pages: int | None = None
     history_fallback: bool = False
     imgur_client_id_env: str = "IMGUR_CLIENT_ID"
@@ -1198,18 +1275,14 @@ def cumulative_frames_removed(generation: int) -> int:
     """Return the leading frames a generation removes from the original media."""
 
     if generation < 0 or generation > CONTENT_RECOVERY_MAX_GENERATION:
-        raise ValueError(
-            f"recovery generation must be between 0 and {CONTENT_RECOVERY_MAX_GENERATION}"
-        )
+        raise ValueError(f"recovery generation must be between 0 and {CONTENT_RECOVERY_MAX_GENERATION}")
     return 0 if generation == 0 else generation * 2 - 1
 
 
 def frames_to_drop(target_generation: int, source_generation: int) -> int:
     """Return the additional trim needed to turn one generation into another."""
 
-    frames = cumulative_frames_removed(target_generation) - cumulative_frames_removed(
-        source_generation
-    )
+    frames = cumulative_frames_removed(target_generation) - cumulative_frames_removed(source_generation)
     if frames < 1:
         raise ValueError("recovery source generation must precede the target generation")
     return frames
@@ -1264,7 +1337,7 @@ def update_recovery_item(
 
 
 def mark_recovery_exhausted(connection: psycopg.Connection[Any], candidate: Candidate) -> bool:
-    """Stop retrying a link after its second confirmed no-media recovery failure."""
+    """Stop retrying a link after the configured number of no-media failures."""
 
     with connection.transaction():
         with connection.cursor() as cursor:
@@ -1281,12 +1354,27 @@ def mark_recovery_exhausted(connection: psycopg.Connection[Any], candidate: Cand
                       FROM content_link_recovery_items
                       WHERE content_link_id = %s
                         AND status = 'unrecoverable'
-                  ) >= 2
+                  ) >= %s
                 RETURNING content_link_id;
                 """,
-                (candidate.content_link_id, candidate.url, candidate.content_link_id),
+                (
+                    candidate.content_link_id,
+                    candidate.url,
+                    candidate.content_link_id,
+                    CONTENT_RECOVERY_MAX_ATTEMPTS,
+                ),
             )
             return cursor.fetchone() is not None
+
+
+def verify_uploaded_link(discord_client: DiscordClient, channel_id: str, uploaded_url: str) -> bool:
+    """Return whether Discord can unfurl an uploaded URL in the recovery test channel."""
+
+    posted_message = discord_client.create_message(channel_id, uploaded_url)
+    message_id = posted_message["id"]
+    time.sleep(RECOVERY_VERIFICATION_DELAY_SECONDS)
+    verified_message = discord_client.get_message(channel_id, message_id)
+    return not is_message_broken_link(verified_message)
 
 
 def summarize_recovery_batch(
@@ -1301,6 +1389,7 @@ def summarize_recovery_batch(
             """
             SELECT
                 COUNT(*) FILTER (WHERE status = 'updated') AS succeeded_count,
+                COUNT(*) FILTER (WHERE status = 'dead') AS dead_count,
                 COUNT(*) FILTER (WHERE status = 'failed') AS failed_count,
                 COUNT(*) FILTER (WHERE status = 'unrecoverable') AS unrecoverable_count,
                 COUNT(*) FILTER (WHERE status = 'rate_limited') AS rate_limited_count,
@@ -1320,6 +1409,7 @@ def summarize_recovery_batch(
         counts[key] > 0
         for key in (
             "failed_count",
+            "dead_count",
             "unrecoverable_count",
             "rate_limited_count",
             "ambiguous_count",
@@ -1415,6 +1505,84 @@ def apply_success(
                 )
 
 
+def record_dead_replacement(
+    connection: psycopg.Connection[Any],
+    candidate: Candidate,
+    replacement_url: str,
+    batch_id: str,
+    recovery_method: str | None,
+    downloaded_size: int,
+    trimmed_size: int,
+    trimmed_sha256: str,
+    imgur_id: str,
+    replacement_generation: int,
+) -> None:
+    """Record a failed test-channel unfurl without reviving the dead source link."""
+
+    with connection.transaction():
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE content_links
+                SET recovery_generation = %s,
+                    is_dead = TRUE,
+                    is_recovery_exhausted = %s,
+                    processed_date = NOW()
+                WHERE content_link_id = %s
+                  AND url = %s
+                  AND is_dead = TRUE
+                RETURNING num_reports;
+                """,
+                (
+                    replacement_generation,
+                    replacement_generation >= CONTENT_RECOVERY_MAX_GENERATION,
+                    candidate.content_link_id,
+                    candidate.url,
+                ),
+            )
+            result = cursor.fetchone()
+            if result is None:
+                raise RuntimeError(
+                    f"Database row changed or disappeared for content_link_id={candidate.content_link_id}; "
+                    "the dead replacement was not recorded"
+                )
+            num_reports_after = int(result[0])
+            cursor.execute(
+                """
+                UPDATE content_link_recovery_items
+                SET status = 'dead',
+                    replacement_url = %s,
+                    recovery_method = %s,
+                    imgur_id = %s,
+                    downloaded_size = %s,
+                    trimmed_size = %s,
+                    trimmed_sha256 = %s,
+                    replacement_generation = %s,
+                    num_reports_after = %s,
+                    finished_at = NOW(),
+                    error = 'Discord marked the uploaded URL as a broken link in the recovery test channel'
+                WHERE batch_id = %s AND content_link_id = %s;
+                """,
+                (
+                    replacement_url,
+                    recovery_method,
+                    imgur_id,
+                    downloaded_size,
+                    trimmed_size,
+                    trimmed_sha256,
+                    replacement_generation,
+                    num_reports_after,
+                    batch_id,
+                    candidate.content_link_id,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise RuntimeError(
+                    f"Recovery audit row disappeared for batch_id={batch_id}, "
+                    f"content_link_id={candidate.content_link_id}"
+                )
+
+
 def sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as input_file:
@@ -1441,6 +1609,7 @@ def process_candidate(
     candidate: Candidate,
     config: RecoveryBatchConfig,
     media_client: DiscordClient,
+    verification_client: DiscordClient,
     imgur_client: ImgurClient,
     batch_id: str,
 ) -> None:
@@ -1516,6 +1685,21 @@ def process_candidate(
             trimmed_sha256 = sha256(trimmed)
             uploaded = imgur_client.upload(trimmed)
             imgur_client.verify_direct_url(uploaded.url)
+            if not verify_uploaded_link(verification_client, config.verification_channel_id, uploaded.url):
+                record_dead_replacement(
+                    connection,
+                    candidate,
+                    uploaded.url,
+                    batch_id,
+                    downloaded.recovery_method,
+                    downloaded.size,
+                    trimmed.stat().st_size,
+                    trimmed_sha256,
+                    uploaded.media_id,
+                    target_generation,
+                )
+                print(f"DEAD {candidate.content_link_id}: Discord could not unfurl {uploaded.url}")
+                return
             apply_success(
                 connection,
                 candidate,
@@ -1537,7 +1721,7 @@ def process_candidate(
         except UnrecoverableMediaError as error:
             mark_failure("unrecoverable", str(error))
             exhausted = mark_recovery_exhausted(connection, candidate)
-            message = "recovery exhausted" if exhausted else "will retry once more"
+            message = "recovery exhausted" if exhausted else "will retry"
             print(f"UNRECOVERABLE {candidate.content_link_id}: {error}; {message}")
             return
         except Exception as error:
@@ -1568,6 +1752,7 @@ def run_recovery_batch(config: RecoveryBatchConfig, *, print_candidates_output: 
                 "status": "completed",
                 "selected_count": 0,
                 "succeeded_count": 0,
+                "dead_count": 0,
                 "failed_count": 0,
                 "unrecoverable_count": 0,
                 "rate_limited_count": 0,
@@ -1576,7 +1761,12 @@ def run_recovery_batch(config: RecoveryBatchConfig, *, print_candidates_output: 
                 "error": None,
             }
 
+        verification_authorization, verification_auth_source = auth_header(config.verification_auth_env)
+        print(
+            f"Verifying uploads in test channel {config.verification_channel_id} " f"using {verification_auth_source}"
+        )
         media_client = DiscordClient()
+        verification_client = DiscordClient(verification_authorization)
         try:
             imgur_client = ImgurClient(
                 client_id,
@@ -1585,6 +1775,7 @@ def run_recovery_batch(config: RecoveryBatchConfig, *, print_candidates_output: 
             )
         except Exception:
             media_client.close()
+            verification_client.close()
             raise
         batch_id = uuid.uuid4().hex
         stopped = False
@@ -1597,6 +1788,7 @@ def run_recovery_batch(config: RecoveryBatchConfig, *, print_candidates_output: 
                         candidate,
                         config,
                         media_client,
+                        verification_client,
                         imgur_client,
                         batch_id,
                     )
@@ -1616,6 +1808,7 @@ def run_recovery_batch(config: RecoveryBatchConfig, *, print_candidates_output: 
                 print(
                     f"Batch {batch_id}: {summary['status']} | "
                     f"succeeded={summary['succeeded_count']} "
+                    f"dead={summary['dead_count']} "
                     f"failed={summary['failed_count']} "
                     f"unrecoverable={summary['unrecoverable_count']} "
                     f"rate_limited={summary['rate_limited_count']} "
@@ -1624,6 +1817,7 @@ def run_recovery_batch(config: RecoveryBatchConfig, *, print_candidates_output: 
                 )
             finally:
                 media_client.close()
+                verification_client.close()
                 imgur_client.close()
         return summary
 
@@ -1665,6 +1859,17 @@ def parse_batch_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--auth-env",
         choices=("TOKEN", "DISCORD_TOKEN", "USER_AUTH"),
         help="Environment variable containing Discord credentials",
+    )
+    parser.add_argument(
+        "--verification-channel-id",
+        default=RECOVERY_TEST_CHANNEL_ID,
+        help=f"Discord channel to post uploaded URLs for verification (default: {RECOVERY_TEST_CHANNEL_ID})",
+    )
+    parser.add_argument(
+        "--verification-auth-env",
+        choices=("TOKEN", "DISCORD_TOKEN"),
+        default="TOKEN",
+        help="Environment variable containing the bot credentials for test-channel verification (default: TOKEN)",
     )
     parser.add_argument(
         "--max-pages",
@@ -1709,6 +1914,8 @@ def run_batch_cli(argv: list[str] | None = None) -> int:
             guild_id=args.guild_id,
             channel_id=args.channel_id,
             auth_env=args.auth_env,
+            verification_channel_id=args.verification_channel_id,
+            verification_auth_env=args.verification_auth_env,
             max_pages=args.max_pages,
             history_fallback=args.history_fallback,
             imgur_client_id_env=args.imgur_client_id_env,
