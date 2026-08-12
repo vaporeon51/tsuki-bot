@@ -30,6 +30,7 @@ import tempfile
 import time
 import uuid
 from collections import deque
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
@@ -53,8 +54,10 @@ from src.config.constants import (  # isort: skip
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_GUILD_ID = "124767749099618304"
 DEFAULT_CHANNEL_ID = "124767749099618304"
-RECOVERY_TEST_CHANNEL_ID = "1499034597952983092"
-RECOVERY_VERIFICATION_DELAY_SECONDS = 30
+RECOVERY_TEST_CHANNEL_ID = "1536908360673271918"
+RECOVERY_VERIFICATION_POLL_INTERVAL_SECONDS = 2
+RECOVERY_VERIFICATION_POLL_ATTEMPTS = 6
+RECOVERY_VERIFICATION_WORKERS = 4
 DISCORD_API_BASE = "https://discord.com/api/v10"
 IMGUR_API_BASE = "https://api.imgur.com/3"
 MEDIA_EXTENSIONS = (".mp4", ".webm", ".gif", ".jpg", ".jpeg", ".png", ".webp")
@@ -88,6 +91,20 @@ class UploadedMedia:
     url: str
     deletehash: str | None
     processing_status: str | None
+
+
+@dataclass(frozen=True)
+class PendingVerification:
+    """An uploaded replacement awaiting the asynchronous Discord unfurl check."""
+
+    candidate: Candidate
+    uploaded: UploadedMedia
+    batch_id: str
+    recovery_method: str | None
+    downloaded_size: int
+    trimmed_size: int
+    trimmed_sha256: str
+    replacement_generation: int
 
 
 def trimmed_output_path(input_path: Path, force: bool) -> Path:
@@ -1167,7 +1184,7 @@ def get_database_url() -> str:
 
 
 def fetch_candidates(connection: psycopg.Connection[Any], role_id: str | None, limit: int) -> list[Candidate]:
-    """Select dead Imgur URLs in the order with the most user impact first."""
+    """Select one dead Imgur row per URL in the order with the most user impact first."""
 
     if limit < 1:
         raise ValueError("--limit must be at least 1")
@@ -1182,6 +1199,44 @@ def fetch_candidates(connection: psycopg.Connection[Any], role_id: str | None, l
     params.append(limit)
 
     query = f"""
+        WITH eligible_candidates AS (
+            SELECT
+                content_link_id,
+                role_id,
+                url,
+                original_url,
+                recovery_generation,
+                num_reports,
+                COALESCE(initial_reaction_count, 0) AS initial_reaction_count,
+                author,
+                uploaded_date
+            FROM content_links
+            WHERE is_dead = TRUE
+              AND is_recovery_exhausted = FALSE
+              AND recovery_generation < %s
+              AND url ILIKE '%%imgur.com/%%'
+              {role_filter}
+        ),
+        one_candidate_per_url AS (
+            SELECT DISTINCT ON (url)
+                content_link_id,
+                role_id,
+                url,
+                original_url,
+                recovery_generation,
+                num_reports,
+                initial_reaction_count,
+                author,
+                uploaded_date
+            FROM eligible_candidates
+            ORDER BY
+                url,
+                recovery_generation DESC,
+                initial_reaction_count DESC,
+                num_reports DESC,
+                uploaded_date ASC,
+                content_link_id ASC
+        )
         SELECT
             content_link_id,
             role_id,
@@ -1192,12 +1247,7 @@ def fetch_candidates(connection: psycopg.Connection[Any], role_id: str | None, l
             COALESCE(initial_reaction_count, 0) AS initial_reaction_count,
             author,
             uploaded_date
-        FROM content_links
-        WHERE is_dead = TRUE
-          AND is_recovery_exhausted = FALSE
-          AND recovery_generation < %s
-          AND url ILIKE '%%imgur.com/%%'
-          {role_filter}
+        FROM one_candidate_per_url
         ORDER BY initial_reaction_count DESC, num_reports DESC, uploaded_date ASC, content_link_id ASC
         LIMIT %s
     """
@@ -1337,7 +1387,7 @@ def update_recovery_item(
 
 
 def mark_recovery_exhausted(connection: psycopg.Connection[Any], candidate: Candidate) -> bool:
-    """Stop retrying a link after the configured number of no-media failures."""
+    """Stop retrying every dead row with this URL after the configured failures."""
 
     with connection.transaction():
         with connection.cursor() as cursor:
@@ -1345,8 +1395,7 @@ def mark_recovery_exhausted(connection: psycopg.Connection[Any], candidate: Cand
                 """
                 UPDATE content_links
                 SET is_recovery_exhausted = TRUE
-                WHERE content_link_id = %s
-                  AND url = %s
+                WHERE url = %s
                   AND is_dead = TRUE
                   AND is_recovery_exhausted = FALSE
                   AND (
@@ -1358,7 +1407,6 @@ def mark_recovery_exhausted(connection: psycopg.Connection[Any], candidate: Cand
                 RETURNING content_link_id;
                 """,
                 (
-                    candidate.content_link_id,
                     candidate.url,
                     candidate.content_link_id,
                     CONTENT_RECOVERY_MAX_ATTEMPTS,
@@ -1372,9 +1420,23 @@ def verify_uploaded_link(discord_client: DiscordClient, channel_id: str, uploade
 
     posted_message = discord_client.create_message(channel_id, uploaded_url)
     message_id = posted_message["id"]
-    time.sleep(RECOVERY_VERIFICATION_DELAY_SECONDS)
-    verified_message = discord_client.get_message(channel_id, message_id)
-    return not is_message_broken_link(verified_message)
+    for attempt in range(RECOVERY_VERIFICATION_POLL_ATTEMPTS):
+        verified_message = discord_client.get_message(channel_id, message_id)
+        if verified_message.get("embeds"):
+            return not is_message_broken_link(verified_message)
+        if attempt < RECOVERY_VERIFICATION_POLL_ATTEMPTS - 1:
+            time.sleep(RECOVERY_VERIFICATION_POLL_INTERVAL_SECONDS)
+    return False
+
+
+def verify_uploaded_link_in_worker(authorization: str, channel_id: str, uploaded_url: str) -> bool:
+    """Verify with a thread-local HTTP session; requests sessions are not shared across workers."""
+
+    discord_client = DiscordClient(authorization)
+    try:
+        return verify_uploaded_link(discord_client, channel_id, uploaded_url)
+    finally:
+        discord_client.close()
 
 
 def summarize_recovery_batch(
@@ -1436,7 +1498,7 @@ def apply_success(
     imgur_id: str,
     replacement_generation: int,
 ) -> None:
-    """Atomically replace a dead link while preserving its user report count."""
+    """Atomically replace every dead row sharing a URL while preserving report counts."""
 
     with connection.transaction():
         with connection.cursor() as cursor:
@@ -1449,8 +1511,7 @@ def apply_success(
                     is_dead = FALSE,
                     is_recovery_exhausted = FALSE,
                     processed_date = NOW()
-                WHERE content_link_id = %s
-                  AND url = %s
+                WHERE url = %s
                   AND is_dead = TRUE
                 RETURNING num_reports;
                 """,
@@ -1458,14 +1519,13 @@ def apply_success(
                     candidate.url,
                     replacement_url,
                     replacement_generation,
-                    candidate.content_link_id,
                     candidate.url,
                 ),
             )
             result = cursor.fetchone()
             if result is None:
                 raise RuntimeError(
-                    f"Database row changed, is no longer dead, or disappeared for content_link_id={candidate.content_link_id}; "
+                    f"Database rows changed, are no longer dead, or disappeared for url={candidate.url}; "
                     "the uploaded URL was not recorded"
                 )
             num_reports_after = int(result[0])
@@ -1517,7 +1577,7 @@ def record_dead_replacement(
     imgur_id: str,
     replacement_generation: int,
 ) -> None:
-    """Record a failed test-channel unfurl without reviving the dead source link."""
+    """Keep every dead row sharing a URL dead when its replacement fails verification."""
 
     with connection.transaction():
         with connection.cursor() as cursor:
@@ -1528,22 +1588,20 @@ def record_dead_replacement(
                     is_dead = TRUE,
                     is_recovery_exhausted = %s,
                     processed_date = NOW()
-                WHERE content_link_id = %s
-                  AND url = %s
+                WHERE url = %s
                   AND is_dead = TRUE
                 RETURNING num_reports;
                 """,
                 (
                     replacement_generation,
                     replacement_generation >= CONTENT_RECOVERY_MAX_GENERATION,
-                    candidate.content_link_id,
                     candidate.url,
                 ),
             )
             result = cursor.fetchone()
             if result is None:
                 raise RuntimeError(
-                    f"Database row changed or disappeared for content_link_id={candidate.content_link_id}; "
+                    f"Database rows changed or disappeared for url={candidate.url}; "
                     "the dead replacement was not recorded"
                 )
             num_reports_after = int(result[0])
@@ -1609,11 +1667,10 @@ def process_candidate(
     candidate: Candidate,
     config: RecoveryBatchConfig,
     media_client: DiscordClient,
-    verification_client: DiscordClient,
     imgur_client: ImgurClient,
     batch_id: str,
-) -> None:
-    """Recover, trim, upload, and record a single candidate."""
+) -> PendingVerification | None:
+    """Recover, trim, and upload a single candidate for later unfurl verification."""
 
     if candidate.recovery_generation >= CONTENT_RECOVERY_MAX_GENERATION:
         raise ValueError(
@@ -1685,32 +1742,15 @@ def process_candidate(
             trimmed_sha256 = sha256(trimmed)
             uploaded = imgur_client.upload(trimmed)
             imgur_client.verify_direct_url(uploaded.url)
-            if not verify_uploaded_link(verification_client, config.verification_channel_id, uploaded.url):
-                record_dead_replacement(
-                    connection,
-                    candidate,
-                    uploaded.url,
-                    batch_id,
-                    downloaded.recovery_method,
-                    downloaded.size,
-                    trimmed.stat().st_size,
-                    trimmed_sha256,
-                    uploaded.media_id,
-                    target_generation,
-                )
-                print(f"DEAD {candidate.content_link_id}: Discord could not unfurl {uploaded.url}")
-                return
-            apply_success(
-                connection,
-                candidate,
-                uploaded.url,
-                batch_id,
-                downloaded.recovery_method,
-                downloaded.size,
-                trimmed.stat().st_size,
-                trimmed_sha256,
-                uploaded.media_id,
-                target_generation,
+            return PendingVerification(
+                candidate=candidate,
+                uploaded=uploaded,
+                batch_id=batch_id,
+                recovery_method=downloaded.recovery_method,
+                downloaded_size=downloaded.size,
+                trimmed_size=trimmed.stat().st_size,
+                trimmed_sha256=trimmed_sha256,
+                replacement_generation=target_generation,
             )
         except ImgurRateLimitError as error:
             mark_failure("rate_limited", str(error))
@@ -1728,6 +1768,78 @@ def process_candidate(
             mark_failure("failed", str(error))
             print(f"FAILED {candidate.content_link_id}: {error}")
             return
+
+
+def finalize_pending_verification(
+    connection: psycopg.Connection[Any], future: Future[bool], pending: PendingVerification
+) -> None:
+    """Apply a completed unfurl result on the batch thread, where the DB connection lives."""
+
+    try:
+        is_live = future.result()
+    except Exception as error:
+        update_recovery_item(
+            connection,
+            pending.batch_id,
+            pending.candidate,
+            "failed",
+            replacement_url=pending.uploaded.url,
+            recovery_method=pending.recovery_method,
+            imgur_id=pending.uploaded.media_id,
+            downloaded_size=pending.downloaded_size,
+            trimmed_size=pending.trimmed_size,
+            trimmed_sha256=pending.trimmed_sha256,
+            error=f"Discord verification failed: {error}",
+            num_reports_after=pending.candidate.num_reports,
+        )
+        print(f"FAILED {pending.candidate.content_link_id}: Discord verification failed: {error}")
+        return
+
+    try:
+        if is_live:
+            apply_success(
+                connection,
+                pending.candidate,
+                pending.uploaded.url,
+                pending.batch_id,
+                pending.recovery_method,
+                pending.downloaded_size,
+                pending.trimmed_size,
+                pending.trimmed_sha256,
+                pending.uploaded.media_id,
+                pending.replacement_generation,
+            )
+            return
+
+        record_dead_replacement(
+            connection,
+            pending.candidate,
+            pending.uploaded.url,
+            pending.batch_id,
+            pending.recovery_method,
+            pending.downloaded_size,
+            pending.trimmed_size,
+            pending.trimmed_sha256,
+            pending.uploaded.media_id,
+            pending.replacement_generation,
+        )
+        print(f"DEAD {pending.candidate.content_link_id}: Discord could not unfurl {pending.uploaded.url}")
+    except Exception as error:
+        update_recovery_item(
+            connection,
+            pending.batch_id,
+            pending.candidate,
+            "failed",
+            replacement_url=pending.uploaded.url,
+            recovery_method=pending.recovery_method,
+            imgur_id=pending.uploaded.media_id,
+            downloaded_size=pending.downloaded_size,
+            trimmed_size=pending.trimmed_size,
+            trimmed_sha256=pending.trimmed_sha256,
+            error=str(error),
+            num_reports_after=pending.candidate.num_reports,
+        )
+        print(f"FAILED {pending.candidate.content_link_id}: {error}")
 
 
 def run_recovery_batch(config: RecoveryBatchConfig, *, print_candidates_output: bool = True) -> dict[str, object]:
@@ -1766,7 +1878,6 @@ def run_recovery_batch(config: RecoveryBatchConfig, *, print_candidates_output: 
             f"Verifying uploads in test channel {config.verification_channel_id} " f"using {verification_auth_source}"
         )
         media_client = DiscordClient()
-        verification_client = DiscordClient(verification_authorization)
         try:
             imgur_client = ImgurClient(
                 client_id,
@@ -1775,33 +1886,47 @@ def run_recovery_batch(config: RecoveryBatchConfig, *, print_candidates_output: 
             )
         except Exception:
             media_client.close()
-            verification_client.close()
             raise
         batch_id = uuid.uuid4().hex
         stopped = False
         stop_reason = None
         try:
-            for candidate in candidates:
-                try:
-                    process_candidate(
-                        connection,
-                        candidate,
-                        config,
-                        media_client,
-                        verification_client,
-                        imgur_client,
-                        batch_id,
-                    )
-                except ImgurRateLimitError as error:
-                    stopped = True
-                    stop_reason = str(error)
-                    print("Stopping the batch after an Imgur rate limit; no further uploads will be attempted.")
-                    break
-                except ImgurUploadUnknownError as error:
-                    stopped = True
-                    stop_reason = str(error)
-                    print(f"Stopping the batch because an Imgur upload outcome was ambiguous: {error}")
-                    break
+            pending_verifications: list[tuple[Future[bool], PendingVerification]] = []
+            with ThreadPoolExecutor(
+                max_workers=RECOVERY_VERIFICATION_WORKERS,
+                thread_name_prefix="recovery-unfurl",
+            ) as verification_executor:
+                for candidate in candidates:
+                    try:
+                        pending = process_candidate(
+                            connection,
+                            candidate,
+                            config,
+                            media_client,
+                            imgur_client,
+                            batch_id,
+                        )
+                        if pending:
+                            future = verification_executor.submit(
+                                verify_uploaded_link_in_worker,
+                                verification_authorization,
+                                config.verification_channel_id,
+                                pending.uploaded.url,
+                            )
+                            pending_verifications.append((future, pending))
+                    except ImgurRateLimitError as error:
+                        stopped = True
+                        stop_reason = str(error)
+                        print("Stopping the batch after an Imgur rate limit; no further uploads will be attempted.")
+                        break
+                    except ImgurUploadUnknownError as error:
+                        stopped = True
+                        stop_reason = str(error)
+                        print(f"Stopping the batch because an Imgur upload outcome was ambiguous: {error}")
+                        break
+
+                for future, pending in pending_verifications:
+                    finalize_pending_verification(connection, future, pending)
         finally:
             try:
                 summary = summarize_recovery_batch(connection, batch_id, len(candidates), stopped, stop_reason)
@@ -1817,7 +1942,6 @@ def run_recovery_batch(config: RecoveryBatchConfig, *, print_candidates_output: 
                 )
             finally:
                 media_client.close()
-                verification_client.close()
                 imgur_client.close()
         return summary
 
