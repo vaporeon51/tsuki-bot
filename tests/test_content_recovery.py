@@ -1,6 +1,7 @@
 import tempfile
 import unittest
 from pathlib import Path
+from concurrent.futures import Future
 from unittest.mock import MagicMock, Mock, patch
 
 from src import content_recovery
@@ -136,6 +137,21 @@ class ContentRecoveryTests(unittest.TestCase):
         query = cursor.execute.call_args.args[0]
         self.assertIn("SELECT DISTINCT ON (url)", query)
         self.assertIn("FROM one_candidate_per_url", query)
+
+    @patch("src.content_recovery.finalize_pending_verification")
+    def test_completed_verifications_are_committed_before_the_batch_ends(self, finalize: Mock) -> None:
+        completed = Future()
+        completed.set_result(True)
+        waiting = Future()
+        completed_item = MagicMock()
+        waiting_item = MagicMock()
+
+        remaining = content_recovery.finalize_completed_verifications(
+            MagicMock(), [(completed, completed_item), (waiting, waiting_item)]
+        )
+
+        finalize.assert_called_once()
+        self.assertEqual(remaining, [(waiting, waiting_item)])
 
     @patch("src.content_recovery.shutil.which", return_value="/usr/bin/ffmpeg")
     @patch("src.content_recovery.subprocess.run")

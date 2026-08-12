@@ -1842,6 +1842,21 @@ def finalize_pending_verification(
         print(f"FAILED {pending.candidate.content_link_id}: {error}")
 
 
+def finalize_completed_verifications(
+    connection: psycopg.Connection[Any],
+    pending_verifications: list[tuple[Future[bool], PendingVerification]],
+) -> list[tuple[Future[bool], PendingVerification]]:
+    """Commit completed verifier results without waiting for the rest of the batch."""
+
+    still_pending: list[tuple[Future[bool], PendingVerification]] = []
+    for future, pending in pending_verifications:
+        if future.done():
+            finalize_pending_verification(connection, future, pending)
+        else:
+            still_pending.append((future, pending))
+    return still_pending
+
+
 def run_recovery_batch(config: RecoveryBatchConfig, *, print_candidates_output: bool = True) -> dict[str, object]:
     """Run one recovery batch and return its database-backed summary."""
 
@@ -1924,6 +1939,8 @@ def run_recovery_batch(config: RecoveryBatchConfig, *, print_candidates_output: 
                         stop_reason = str(error)
                         print(f"Stopping the batch because an Imgur upload outcome was ambiguous: {error}")
                         break
+
+                    pending_verifications = finalize_completed_verifications(connection, pending_verifications)
 
                 for future, pending in pending_verifications:
                     finalize_pending_verification(connection, future, pending)
