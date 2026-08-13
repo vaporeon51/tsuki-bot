@@ -1,4 +1,5 @@
 from collections import defaultdict, deque
+from dataclasses import dataclass
 
 from src.config.constants import (
     CONTENT_RECOVERY_MAX_GENERATION,
@@ -13,6 +14,12 @@ from src.config.constants import (
 from . import POOL
 
 RECENTLY_SENT_QUEUES = defaultdict(lambda: deque(maxlen=RECENTLY_SENT_QUEUE_SIZE))
+
+
+@dataclass(frozen=True)
+class DeadLinkCheckCandidate:
+    url: str
+    role_labels: tuple[str, ...]
 
 
 def get_closest_roles(query: str, min_age: str, count: int = 1) -> list[str] | None:
@@ -247,3 +254,35 @@ def mark_url_dead(url: str) -> int:
                 (CONTENT_RECOVERY_MAX_GENERATION, url),
             )
             return cur.rowcount
+
+
+def get_live_urls_for_dead_link_check(after_url: str | None, limit: int) -> list[DeadLinkCheckCandidate]:
+    """Return the next distinct, eligible URLs with their role labels."""
+
+    with POOL.connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                WITH live_rows AS (
+                    SELECT
+                        cl.url,
+                        CASE
+                            WHEN ri.member_name IS NOT NULL AND ri.group_name IS NOT NULL
+                                THEN ri.member_name || ' (' || ri.group_name || ')'
+                            ELSE COALESCE(ri.member_name, ri.group_name, cl.role_id)
+                        END AS role_label
+                    FROM content_links cl
+                    LEFT JOIN role_info ri ON ri.role_id = cl.role_id
+                    WHERE cl.is_dead = FALSE
+                      AND cl.num_reports < %s
+                      AND (%s::TEXT IS NULL OR cl.url > %s)
+                )
+                SELECT url, array_agg(DISTINCT role_label ORDER BY role_label)
+                FROM live_rows
+                GROUP BY url
+                ORDER BY url ASC
+                LIMIT %s;
+                """,
+                (REPORT_THRESHOLD, after_url, after_url, limit),
+            )
+            return [DeadLinkCheckCandidate(url=row[0], role_labels=tuple(row[1])) for row in cur.fetchall()]

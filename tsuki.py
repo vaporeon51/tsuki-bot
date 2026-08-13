@@ -2,6 +2,7 @@ import asyncio
 import os
 import random
 import sys
+from collections import deque
 from pathlib import Path
 
 import discord
@@ -22,6 +23,9 @@ from src.config.constants import (
     CONTENT_RECOVERY_INTERVAL_SECONDS,
     CONTENT_RECOVERY_MAX_UPLOADS_PER_HOUR,
     CONTENT_RECOVERY_UPLOAD_INTERVAL,
+    DEAD_LINK_CHECK_BATCH_SIZE,
+    DEAD_LINK_CHECK_CHANNEL_ID,
+    DEAD_LINK_CHECK_INTERVAL_SECONDS,
     REDDIT_FEED_WINDOW,
     REPORT_EMOTE,
     TSUKI_HARAM_HUG,
@@ -44,7 +48,13 @@ from src.db.birthday_feed import set_birthday_feed, unset_birthday_feeds
 from src.db.guild_settings import get_min_age, set_min_age
 from src.db.reddit_feeds import get_subscriptions, set_reddit_feed, unset_feeds
 from src.db.stats import add_stat_count
-from src.db.utils import get_closest_roles, get_latest_links_for_roles, get_random_link_for_each_role, get_random_roles
+from src.db.utils import (
+    get_closest_roles,
+    get_latest_links_for_roles,
+    get_live_urls_for_dead_link_check,
+    get_random_link_for_each_role,
+    get_random_roles,
+)
 from src.discord_ui.bias_rater import (
     LEADERBOARD_MAX_ENTRIES,
     LEADERBOARD_PAGE_SIZE,
@@ -55,13 +65,15 @@ from src.discord_ui.bias_rater import (
 )
 from src.llm_chat import HANNI_EMOJIS, OVERLOAD_MESSAGES, ChatMsg, generate_chat_response
 from src.rate_limit import ChannelRateLimiter, Decision
-from src.reaction.gather import gather_reactions
+from src.reaction.gather import gather_dead_link, gather_reactions
 from src.reddit_feeds import update_reddit_feeds
 
 TOKEN = os.environ.get("TOKEN")
 OWNER_USER_ID = 1298088341241335841
 OWNER_WHISPER_PREFIX = "whisper "
 _background_tasks = set()
+_dead_link_check_urls: deque[tuple[str, tuple[str, ...]]] = deque()
+_dead_link_check_cursor: str | None = None
 
 
 class TsukiBot(commands.Bot):
@@ -198,6 +210,66 @@ async def recover_content_loop():
         print(f"Error with content recovery: {e}")
 
 
+async def next_dead_link_check_url() -> tuple[str, tuple[str, ...]] | None:
+    """Return the next URL in a full, distinct sweep of eligible links."""
+
+    global _dead_link_check_cursor
+
+    if not _dead_link_check_urls:
+        urls = await asyncio.to_thread(
+            get_live_urls_for_dead_link_check,
+            _dead_link_check_cursor,
+            DEAD_LINK_CHECK_BATCH_SIZE,
+        )
+        if not urls and _dead_link_check_cursor is not None:
+            _dead_link_check_cursor = None
+            urls = await asyncio.to_thread(
+                get_live_urls_for_dead_link_check,
+                None,
+                DEAD_LINK_CHECK_BATCH_SIZE,
+            )
+
+        if not urls:
+            return None
+
+        _dead_link_check_urls.extend((candidate.url, candidate.role_labels) for candidate in urls)
+        _dead_link_check_cursor = urls[-1].url
+
+    return _dead_link_check_urls.popleft()
+
+
+def dead_link_role_notice(url: str, role_labels: tuple[str, ...]) -> str:
+    """Format a concise test-channel notification for a detected dead link."""
+
+    roles = ", ".join(role_labels) or "Unknown role"
+    return f"⚠️ Dead link detected: <{url}>\nAffected roles: {roles}"[:2000]
+
+
+@tasks.loop(seconds=DEAD_LINK_CHECK_INTERVAL_SECONDS)
+async def dead_link_check_loop():
+    try:
+        candidate = await next_dead_link_check_url()
+        if candidate is None:
+            print("Dead-link checker found no eligible live URLs.")
+            return
+        url, role_labels = candidate
+
+        channel = bot.get_channel(DEAD_LINK_CHECK_CHANNEL_ID)
+        if channel is None:
+            channel = await bot.fetch_channel(DEAD_LINK_CHECK_CHANNEL_ID)
+
+        message = await channel.send(url)
+        marked_count = await gather_dead_link(
+            message,
+            url,
+            wait_seconds=DEAD_LINK_CHECK_INTERVAL_SECONDS,
+        )
+        if marked_count:
+            await channel.send(dead_link_role_notice(url, role_labels))
+    except Exception as e:
+        print(f"Error with dead-link check: {e}")
+
+
 @bot.event
 async def on_ready():
     try:
@@ -232,6 +304,7 @@ async def on_ready():
         start_loop_once(update_bias_leaderboard_snapshots_loop)
         start_loop_once(cleanup_accumulating_tables_loop)
         start_loop_once(recover_content_loop)
+        start_loop_once(dead_link_check_loop)
 
 
 @bot.tree.command(name="feed", description="Get random kpop content using idol or group name.")
