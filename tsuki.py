@@ -50,10 +50,12 @@ from src.db.reddit_feeds import get_subscriptions, set_reddit_feed, unset_feeds
 from src.db.stats import add_stat_count
 from src.db.utils import (
     get_closest_roles,
+    get_dead_link_check_cursor,
     get_latest_links_for_roles,
     get_live_urls_for_dead_link_check,
     get_random_link_for_each_role,
     get_random_roles,
+    set_dead_link_check_cursor,
 )
 from src.discord_ui.bias_rater import (
     LEADERBOARD_MAX_ENTRIES,
@@ -74,6 +76,7 @@ OWNER_WHISPER_PREFIX = "whisper "
 _background_tasks = set()
 _dead_link_check_urls: deque[tuple[str, tuple[str, ...]]] = deque()
 _dead_link_check_cursor: str | None = None
+_dead_link_check_cursor_loaded = False
 
 
 class TsukiBot(commands.Bot):
@@ -213,7 +216,11 @@ async def recover_content_loop():
 async def next_dead_link_check_url() -> tuple[str, tuple[str, ...]] | None:
     """Return the next URL in a full, distinct sweep of eligible links."""
 
-    global _dead_link_check_cursor
+    global _dead_link_check_cursor, _dead_link_check_cursor_loaded
+
+    if not _dead_link_check_cursor_loaded:
+        _dead_link_check_cursor = await asyncio.to_thread(get_dead_link_check_cursor)
+        _dead_link_check_cursor_loaded = True
 
     if not _dead_link_check_urls:
         urls = await asyncio.to_thread(
@@ -233,9 +240,17 @@ async def next_dead_link_check_url() -> tuple[str, tuple[str, ...]] | None:
             return None
 
         _dead_link_check_urls.extend((candidate.url, candidate.role_labels) for candidate in urls)
-        _dead_link_check_cursor = urls[-1].url
 
     return _dead_link_check_urls.popleft()
+
+
+async def save_dead_link_check_cursor(url: str) -> None:
+    """Record a completed check only after Discord verification has finished."""
+
+    global _dead_link_check_cursor
+
+    await asyncio.to_thread(set_dead_link_check_cursor, url)
+    _dead_link_check_cursor = url
 
 
 def dead_link_role_notice(url: str, role_labels: tuple[str, ...]) -> str:
@@ -266,6 +281,7 @@ async def dead_link_check_loop():
         )
         if marked_count:
             await channel.send(dead_link_role_notice(url, role_labels))
+        await save_dead_link_check_cursor(url)
     except Exception as e:
         print(f"Error with dead-link check: {e}")
 

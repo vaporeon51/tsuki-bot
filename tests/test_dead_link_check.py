@@ -62,6 +62,20 @@ class DeadLinkQueryTests(unittest.TestCase):
         self.assertIn("ORDER BY url ASC", query)
         self.assertEqual(params, (5, "https://i.imgur.com/0.mp4", "https://i.imgur.com/0.mp4", 100))
 
+    @patch("src.db.utils.POOL")
+    def test_dead_link_cursor_is_loaded_and_saved(self, pool: MagicMock) -> None:
+        cursor = pool.connection.return_value.__enter__.return_value.cursor.return_value.__enter__.return_value
+        cursor.fetchone.return_value = ("https://i.imgur.com/last.mp4",)
+
+        self.assertEqual(utils.get_dead_link_check_cursor(), "https://i.imgur.com/last.mp4")
+        utils.set_dead_link_check_cursor("https://i.imgur.com/next.mp4")
+
+        load_query = cursor.execute.call_args_list[0].args[0]
+        save_query, save_params = cursor.execute.call_args_list[1].args
+        self.assertIn("SELECT last_url", load_query)
+        self.assertIn("ON CONFLICT (state_id)", save_query)
+        self.assertEqual(save_params, ("https://i.imgur.com/next.mp4",))
+
 
 if __name__ == "__main__":
     unittest.main()

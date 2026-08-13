@@ -42,5 +42,5 @@ CONTENT_RECOVERY_MAX_ATTEMPTS = 3
 # Background dead-link checker.  Probe messages are posted to this private test
 # channel and deleted after Discord has had a moment to unfurl the URL.
 DEAD_LINK_CHECK_CHANNEL_ID = 1537540189595901952
-DEAD_LINK_CHECK_INTERVAL_SECONDS = 4
+DEAD_LINK_CHECK_INTERVAL_SECONDS = 7
 DEAD_LINK_CHECK_BATCH_SIZE = 100

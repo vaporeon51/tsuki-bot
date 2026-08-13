@@ -286,3 +286,29 @@ def get_live_urls_for_dead_link_check(after_url: str | None, limit: int) -> list
                 (REPORT_THRESHOLD, after_url, after_url, limit),
             )
             return [DeadLinkCheckCandidate(url=row[0], role_labels=tuple(row[1])) for row in cur.fetchall()]
+
+
+def get_dead_link_check_cursor() -> str | None:
+    """Return the URL most recently completed by the dead-link checker."""
+
+    with POOL.connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT last_url FROM dead_link_check_state WHERE state_id = 1;")
+            row = cur.fetchone()
+            return row[0] if row else None
+
+
+def set_dead_link_check_cursor(url: str) -> None:
+    """Persist a completed dead-link check so the next process can resume."""
+
+    with POOL.connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO dead_link_check_state (state_id, last_url, updated_at)
+                VALUES (1, %s, NOW())
+                ON CONFLICT (state_id)
+                DO UPDATE SET last_url = EXCLUDED.last_url, updated_at = EXCLUDED.updated_at;
+                """,
+                (url,),
+            )
