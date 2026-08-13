@@ -1,7 +1,12 @@
+import csv
+import io
 from collections import defaultdict, deque
+from dataclasses import dataclass
+from pathlib import Path
 
 from src.config.constants import (
     CONTENT_RECOVERY_MAX_GENERATION,
+    GET_LINKS_EXPORT_CHUNK_BYTES,
     INITIAL_REACT_CAP,
     RECENTLY_SENT_QUEUE_SIZE,
     REPORT_EMOTE,
@@ -13,6 +18,139 @@ from src.config.constants import (
 from . import POOL
 
 RECENTLY_SENT_QUEUES = defaultdict(lambda: deque(maxlen=RECENTLY_SENT_QUEUE_SIZE))
+
+LINK_EXPORT_COLUMNS = (
+    "idol",
+    "role_id",
+    "uploaded_date",
+    "author",
+    "url",
+    "original_url",
+)
+
+
+@dataclass(frozen=True)
+class LinkExport:
+    paths: list[Path]
+    row_count: int
+
+
+def role_autocomplete_matches(query: str, limit: int = 25) -> list[tuple[str, str]]:
+    """Return live-content role choices as ``Idol (Group)`` labels and role IDs."""
+
+    normalized_query = query.strip()
+    with POOL.connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT ri.role_id, ri.member_name, ri.group_name
+                FROM role_info AS ri
+                WHERE EXISTS (
+                    SELECT 1
+                    FROM content_links AS cl
+                    WHERE cl.role_id = ri.role_id
+                      AND cl.is_dead = FALSE
+                      AND cl.num_reports < %s
+                )
+                  AND (
+                    %s = ''
+                    OR ri.member_name ILIKE '%%' || %s || '%%'
+                    OR ri.group_name ILIKE '%%' || %s || '%%'
+                  )
+                ORDER BY LOWER(ri.member_name), LOWER(ri.group_name), ri.role_id
+                LIMIT %s;
+                """,
+                (REPORT_THRESHOLD, normalized_query, normalized_query, normalized_query, limit),
+            )
+            rows = cur.fetchall()
+
+    matches: list[tuple[str, str]] = []
+    for role_id, member_name, group_name in rows:
+        member = str(member_name or "").strip()
+        group = str(group_name or "").strip()
+        label = f"{member} ({group})" if member and group else member or group
+        matches.append((label[:100], str(role_id)))
+    return matches
+
+
+def export_live_links_csv(
+    role_id: str,
+    output_dir: Path,
+    max_chunk_bytes: int = GET_LINKS_EXPORT_CHUNK_BYTES,
+) -> LinkExport:
+    """Write all eligible links for a role to one or more CSV files."""
+
+    if max_chunk_bytes < 1024:
+        raise ValueError("max_chunk_bytes must be at least 1024")
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    paths: list[Path] = []
+    row_count = 0
+    chunk_index = 0
+    output_file = None
+    bytes_written = 0
+
+    def serialize(values: tuple[object, ...]) -> bytes:
+        row_buffer = io.StringIO(newline="")
+        csv.writer(row_buffer).writerow(values)
+        return row_buffer.getvalue().encode("utf-8")
+
+    header = serialize(LINK_EXPORT_COLUMNS)
+
+    def open_chunk() -> tuple[Path, object, int]:
+        nonlocal chunk_index
+        chunk_index += 1
+        path = output_dir / f"links-{role_id}-{chunk_index}.csv"
+        file = path.open("wb")
+        file.write(header)
+        paths.append(path)
+        return path, file, len(header)
+
+    try:
+        with POOL.connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT
+                        CASE
+                            WHEN NULLIF(TRIM(ri.member_name), '') IS NOT NULL
+                             AND NULLIF(TRIM(ri.group_name), '') IS NOT NULL
+                                THEN TRIM(ri.member_name) || ' (' || TRIM(ri.group_name) || ')'
+                            ELSE COALESCE(NULLIF(TRIM(ri.member_name), ''), TRIM(ri.group_name))
+                        END AS idol,
+                        cl.role_id,
+                        cl.uploaded_date,
+                        cl.author,
+                        cl.url,
+                        cl.original_url
+                    FROM content_links AS cl
+                    JOIN role_info AS ri ON ri.role_id = cl.role_id
+                    WHERE cl.role_id = %s
+                      AND cl.is_dead = FALSE
+                      AND cl.num_reports < %s
+                    ORDER BY cl.uploaded_date ASC, cl.content_link_id ASC;
+                    """,
+                    (role_id, REPORT_THRESHOLD),
+                )
+                for row in cur:
+                    serialized_row = serialize(tuple("" if value is None else value for value in row))
+                    if output_file is None:
+                        _, output_file, bytes_written = open_chunk()
+                    if bytes_written + len(serialized_row) > max_chunk_bytes and bytes_written > len(header):
+                        output_file.close()
+                        _, output_file, bytes_written = open_chunk()
+                    output_file.write(serialized_row)
+                    bytes_written += len(serialized_row)
+                    row_count += 1
+    finally:
+        if output_file is not None:
+            output_file.close()
+
+    if row_count == 0:
+        for path in paths:
+            path.unlink(missing_ok=True)
+        paths.clear()
+    return LinkExport(paths=paths, row_count=row_count)
 
 
 def get_closest_roles(query: str, min_age: str, count: int = 1) -> list[str] | None:
