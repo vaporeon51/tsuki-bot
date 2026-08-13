@@ -144,6 +144,27 @@ class ContentMessageClassifierTests(unittest.TestCase):
 
         self.assertEqual(len(links), 1)
 
+    def test_known_role_mention_in_text_is_used_when_discord_omits_mention_roles(self) -> None:
+        classifier = content_ingestion.ContentMessageClassifier(fallback_role_ids=frozenset({"123"}))
+        root = self.root | {
+            "content": "<@&123>\nhttps://imgur.com/root",
+            "mention_roles": [],
+        }
+
+        links = classifier.consume(root)
+
+        self.assertEqual([link.role_id for link in links], ["123"])
+        self.assertEqual([link.source_kind for link in links], [content_ingestion.ROOT])
+
+    def test_unknown_text_role_mention_is_ignored(self) -> None:
+        classifier = content_ingestion.ContentMessageClassifier(fallback_role_ids=frozenset({"123"}))
+        root = self.root | {
+            "content": "<@&456>\nhttps://imgur.com/root",
+            "mention_roles": [],
+        }
+
+        self.assertEqual(classifier.consume(root), [])
+
     def test_animated_image_embed_is_ingested(self) -> None:
         animated_image_root = self.root | {
             "content": "<@&role-1>\nhttps://cdn.example.com/content.webp",
