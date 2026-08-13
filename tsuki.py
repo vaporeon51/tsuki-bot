@@ -2,6 +2,7 @@ import asyncio
 import os
 import random
 import sys
+import tempfile
 from pathlib import Path
 
 import discord
@@ -22,6 +23,7 @@ from src.config.constants import (
     CONTENT_RECOVERY_INTERVAL_SECONDS,
     CONTENT_RECOVERY_MAX_UPLOADS_PER_HOUR,
     CONTENT_RECOVERY_UPLOAD_INTERVAL,
+    GET_LINKS_COOLDOWN_SECONDS,
     REDDIT_FEED_WINDOW,
     REPORT_EMOTE,
     TSUKI_HARAM_HUG,
@@ -44,7 +46,14 @@ from src.db.birthday_feed import set_birthday_feed, unset_birthday_feeds
 from src.db.guild_settings import get_min_age, set_min_age
 from src.db.reddit_feeds import get_subscriptions, set_reddit_feed, unset_feeds
 from src.db.stats import add_stat_count
-from src.db.utils import get_closest_roles, get_latest_links_for_roles, get_random_link_for_each_role, get_random_roles
+from src.db.utils import (
+    export_live_links_csv,
+    get_closest_roles,
+    get_latest_links_for_roles,
+    get_random_link_for_each_role,
+    get_random_roles,
+    role_autocomplete_matches,
+)
 from src.discord_ui.bias_rater import (
     LEADERBOARD_MAX_ENTRIES,
     LEADERBOARD_PAGE_SIZE,
@@ -347,6 +356,63 @@ async def latest(
             await asyncio.sleep(4)
 
     await asyncio.to_thread(add_stat_count, "latest")
+
+
+@bot.tree.command(name="get_links", description="Export usable content links for an idol as CSV files.")
+@discord.app_commands.describe(idol="Idol to export, displayed as Name (Group)")
+@discord.app_commands.guild_only()
+@discord.app_commands.checks.cooldown(1, GET_LINKS_COOLDOWN_SECONDS, key=lambda interaction: interaction.user.id)
+async def get_links(interaction: discord.Interaction, idol: str):
+    """Publish a CSV export of every live, below-threshold link for one idol."""
+
+    await interaction.response.defer(thinking=True)
+    attachment_limit = interaction.guild.filesize_limit if interaction.guild else 8 * 1024 * 1024
+    max_chunk_bytes = max(1024, int(attachment_limit * 0.95))
+
+    with tempfile.TemporaryDirectory(prefix="tsuki-links-") as temporary_dir:
+        export = await asyncio.to_thread(
+            export_live_links_csv,
+            idol,
+            Path(temporary_dir),
+            max_chunk_bytes,
+        )
+        if export.row_count == 0:
+            await interaction.edit_original_response(content="No usable links were found for that idol.")
+            return
+
+        files = [discord.File(path, filename=path.name) for path in export.paths]
+        try:
+            first_batch, remaining_files = files[:10], files[10:]
+            await interaction.edit_original_response(
+                content=(f"Exported {export.row_count:,} usable link(s) across {len(files)} CSV file(s)."),
+                attachments=first_batch,
+            )
+            for start in range(0, len(remaining_files), 10):
+                await interaction.followup.send(files=remaining_files[start : start + 10])
+        finally:
+            for file in files:
+                file.close()
+
+
+@get_links.autocomplete("idol")
+async def get_links_idol_autocomplete(
+    _interaction: discord.Interaction, current: str
+) -> list[discord.app_commands.Choice[str]]:
+    matches = await asyncio.to_thread(role_autocomplete_matches, current)
+    return [discord.app_commands.Choice(name=label, value=role_id) for label, role_id in matches]
+
+
+@get_links.error
+async def get_links_error(interaction: discord.Interaction, error: discord.app_commands.AppCommandError) -> None:
+    if isinstance(error, discord.app_commands.CommandOnCooldown):
+        wait_seconds = max(1, round(error.retry_after))
+        await interaction.response.send_message(
+            f"You can request another link export in about {wait_seconds} seconds.", ephemeral=True
+        )
+        return
+    print(f"/get_links failed: {error}")
+    if not interaction.response.is_done():
+        await interaction.response.send_message("Could not create the link export.", ephemeral=True)
 
 
 @bot.tree.command(

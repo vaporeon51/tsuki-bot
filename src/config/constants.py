@@ -9,6 +9,11 @@ REACT_WAIT_SEC = 3 * 60
 # Number of user reports to hide a role + link combination.
 REPORT_THRESHOLD = 5
 
+# Public /get_links exports are rate-limited per user and split conservatively
+# below Discord's attachment limit.
+GET_LINKS_COOLDOWN_SECONDS = 5 * 60
+GET_LINKS_EXPORT_CHUNK_BYTES = 7 * 1024 * 1024
+
 # 20x net upvotes translates to 2x the probability so log(2)/log(20)
 SAMPLING_EXPONENT = 0.23137821316
 
