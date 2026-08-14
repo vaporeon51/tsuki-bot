@@ -143,6 +143,12 @@ class ContentRecoveryTests(unittest.TestCase):
         self.assertIn("AND is_dead = TRUE", content_link_update)
         self.assertNotIn("content_link_id", content_link_update.split("WHERE", 1)[1])
 
+    def test_dead_link_role_notice_matches_the_background_checker_format(self) -> None:
+        self.assertEqual(
+            content_recovery.dead_link_role_notice("https://i.imgur.com/dead.mp4", ("Tsuki (Billlie)",)),
+            "⚠️ Dead link detected: <https://i.imgur.com/dead.mp4>\nAffected roles: Tsuki (Billlie)",
+        )
+
     def test_fetch_candidates_deduplicates_shared_urls(self) -> None:
         connection = MagicMock()
         cursor = connection.cursor.return_value.__enter__.return_value
