@@ -37,6 +37,23 @@ class DisambiguationQueryTests(unittest.TestCase):
         self.assertEqual(cursor.execute.call_count, 1)
 
     @patch("src.db.utils.POOL")
+    def test_specific_url_can_be_reviewed_after_it_was_disambiguated(self, pool: MagicMock) -> None:
+        cursor = pool.connection.return_value.__enter__.return_value.cursor.return_value.__enter__.return_value
+        cursor.fetchone.return_value = ("https://i.imgur.com/example.gif",)
+        cursor.fetchall.return_value = [
+            ("role-1", "Mina (TWICE)"),
+            ("role-2", "Sana (TWICE)"),
+        ]
+
+        candidate = utils.get_disambiguation_candidate("https://i.imgur.com/example.gif")
+
+        self.assertIsNotNone(candidate)
+        query, params = cursor.execute.call_args_list[0].args
+        self.assertIn("WHERE url = %s", query)
+        self.assertNotIn("disambiguated = FALSE", query)
+        self.assertEqual(params, ("https://i.imgur.com/example.gif",))
+
+    @patch("src.db.utils.POOL")
     def test_apply_keeps_selected_roles_and_suppresses_others(self, pool: MagicMock) -> None:
         cursor = pool.connection.return_value.__enter__.return_value.cursor.return_value.__enter__.return_value
         cursor.rowcount = 3

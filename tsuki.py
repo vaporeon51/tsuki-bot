@@ -742,14 +742,18 @@ class Admin(discord.app_commands.Group):
 
     @discord.app_commands.command(
         name="disambiguate",
-        description="Review the role assignments for one unresolved multi-role link.",
+        description="Review an unresolved multi-role link, or a specified URL.",
     )
-    async def disambiguate(self, interaction: discord.Interaction):
+    @discord.app_commands.describe(url="Optional exact content URL to review")
+    async def disambiguate(self, interaction: discord.Interaction, url: str | None = None):
         # The database can take longer than Discord's three-second interaction deadline.
         await interaction.response.defer()
-        candidate = await asyncio.to_thread(get_disambiguation_candidate)
+        candidate = await asyncio.to_thread(get_disambiguation_candidate, url)
         if candidate is None:
-            await interaction.edit_original_response(content="No unresolved multi-role links are available.")
+            text = (
+                "No unresolved multi-role links are available." if url is None else "That URL has no reviewable roles."
+            )
+            await interaction.edit_original_response(content=text)
             return
 
         view = DisambiguationView(interaction.user.id, candidate)

@@ -243,23 +243,35 @@ def mark_url_dead(url: str) -> int:
             return cur.rowcount
 
 
-def get_disambiguation_candidate() -> DisambiguationCandidate | None:
-    """Return one live, unresolved URL with two to 25 candidate roles."""
+def get_disambiguation_candidate(url: str | None = None) -> DisambiguationCandidate | None:
+    """Return one unresolved URL, or load a specified URL for an admin review."""
 
     with POOL.connection() as conn:
         with conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT url
-                FROM content_links
-                WHERE is_dead = FALSE
-                  AND disambiguated = FALSE
-                GROUP BY url
-                HAVING COUNT(DISTINCT role_id) BETWEEN 2 AND 25
-                ORDER BY RANDOM()
-                LIMIT 1;
-                """
-            )
+            if url is None:
+                cur.execute(
+                    """
+                    SELECT url
+                    FROM content_links
+                    WHERE is_dead = FALSE
+                      AND disambiguated = FALSE
+                    GROUP BY url
+                    HAVING COUNT(DISTINCT role_id) BETWEEN 2 AND 25
+                    ORDER BY RANDOM()
+                    LIMIT 1;
+                    """
+                )
+            else:
+                cur.execute(
+                    """
+                    SELECT url
+                    FROM content_links
+                    WHERE url = %s
+                    GROUP BY url
+                    HAVING COUNT(DISTINCT role_id) BETWEEN 2 AND 25;
+                    """,
+                    (url,),
+                )
             url_row = cur.fetchone()
             if url_row is None:
                 return None
