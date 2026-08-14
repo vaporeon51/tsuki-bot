@@ -70,7 +70,7 @@ class DisambiguationView(discord.ui.View):
 
         selected_labels = [role.label for role in self.candidate.roles if role.role_id in self.selected_role_ids]
         kept = ", ".join(selected_labels) if selected_labels else "no roles"
-        await interaction.followup.send(f"Saved {updated} rows. Kept: {kept}.", ephemeral=True)
+        await interaction.followup.send(f"Saved {updated} rows. Kept: {kept}.")
 
     @discord.ui.button(label="Skip", style=discord.ButtonStyle.secondary)
     async def skip_button(self, interaction: discord.Interaction, _button: discord.ui.Button) -> None:
@@ -79,4 +79,4 @@ class DisambiguationView(discord.ui.View):
         message = interaction.message or self.message
         if message is not None:
             await message.edit(view=None)
-        await interaction.followup.send("Skipped; this URL remains unresolved.", ephemeral=True)
+        await interaction.followup.send("Skipped; this URL remains unresolved.")
