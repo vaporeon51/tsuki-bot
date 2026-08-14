@@ -11,11 +11,29 @@ from src.reaction.gather import gather_dead_link
 
 class DeadLinkGatherTests(unittest.IsolatedAsyncioTestCase):
     @patch("src.reaction.gather.mark_url_dead")
-    async def test_broken_probe_marks_all_matching_rows(self, mark_url_dead: MagicMock) -> None:
+    async def test_pending_embed_does_not_mark_link_dead(self, mark_url_dead: MagicMock) -> None:
         message = MagicMock()
         message.id = 123
         checked_message = MagicMock()
         checked_message.embeds = []
+        message.channel.fetch_message = AsyncMock(return_value=checked_message)
+
+        marked_count = await gather_dead_link(
+            message,
+            "https://i.imgur.com/dead.mp4",
+            wait_seconds=0,
+        )
+
+        self.assertEqual(marked_count, 0)
+        message.channel.fetch_message.assert_awaited_once_with(123)
+        mark_url_dead.assert_not_called()
+
+    @patch("src.reaction.gather.mark_url_dead")
+    async def test_wrong_embed_marks_all_matching_rows(self, mark_url_dead: MagicMock) -> None:
+        message = MagicMock()
+        message.id = 123
+        checked_message = MagicMock()
+        checked_message.embeds = [MagicMock(type="article")]
         message.channel.fetch_message = AsyncMock(return_value=checked_message)
         mark_url_dead.return_value = 2
 
