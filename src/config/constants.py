@@ -1,10 +1,5 @@
-UPVOTE_EMOTE = "❤️"
-REPORT_EMOTE = "⚠️"
 TSUKI_NOM = "🐰"
 TSUKI_HARAM_HUG = "💕"
-
-# Number of seconds to wait before updating db based on reactions
-REACT_WAIT_SEC = 3 * 60
 
 # Number of user reports to hide a role + link combination.
 REPORT_THRESHOLD = 5

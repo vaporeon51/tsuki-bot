@@ -5,10 +5,8 @@ from src.config.constants import (
     CONTENT_RECOVERY_MAX_GENERATION,
     INITIAL_REACT_CAP,
     RECENTLY_SENT_QUEUE_SIZE,
-    REPORT_EMOTE,
     REPORT_THRESHOLD,
     SAMPLING_EXPONENT,
-    UPVOTE_EMOTE,
 )
 
 from . import POOL
@@ -20,6 +18,18 @@ RECENTLY_SENT_QUEUES = defaultdict(lambda: deque(maxlen=RECENTLY_SENT_QUEUE_SIZE
 class DeadLinkCheckCandidate:
     url: str
     role_labels: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class DisambiguationRole:
+    role_id: str
+    label: str
+
+
+@dataclass(frozen=True)
+class DisambiguationCandidate:
+    url: str
+    roles: tuple[DisambiguationRole, ...]
 
 
 def get_closest_roles(query: str, min_age: str, count: int = 1) -> list[str] | None:
@@ -215,29 +225,6 @@ def get_random_link_for_each_role(
             return result
 
 
-def update_given_emote_counts(role_id: str, url: str, count_by_emoji: dict[str, int]) -> None:
-    """Update the database for role and URL given the feedback from users."""
-
-    # Subtract 1 from each one to remove bot's react
-    upvote_count = count_by_emoji[UPVOTE_EMOTE] - 1
-    report_count = count_by_emoji[REPORT_EMOTE] - 1
-
-    if upvote_count + report_count > 0:
-        with POOL.connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    UPDATE content_links
-                    SET num_upvotes = num_upvotes + %s,
-                        num_reports = num_reports + %s
-                    WHERE url = %s
-                    AND role_id = %s;
-                    """,
-                    (upvote_count, report_count, url, role_id),
-                )
-        print(f"Updated feedback for {role_id} {url}: {(upvote_count, report_count)}")
-
-
 def mark_url_dead(url: str) -> int:
     """Mark every role using an unavailable URL as dead without changing user reports."""
 
@@ -252,6 +239,81 @@ def mark_url_dead(url: str) -> int:
                   AND is_dead = FALSE;
                 """,
                 (CONTENT_RECOVERY_MAX_GENERATION, url),
+            )
+            return cur.rowcount
+
+
+def get_disambiguation_candidate(url: str | None = None) -> DisambiguationCandidate | None:
+    """Return one unresolved URL, or load a specified URL for an admin review."""
+
+    with POOL.connection() as conn:
+        with conn.cursor() as cur:
+            if url is None:
+                cur.execute(
+                    """
+                    SELECT url
+                    FROM content_links
+                    WHERE is_dead = FALSE
+                      AND disambiguated = FALSE
+                    GROUP BY url
+                    HAVING COUNT(DISTINCT role_id) BETWEEN 2 AND 25
+                    ORDER BY RANDOM()
+                    LIMIT 1;
+                    """
+                )
+            else:
+                cur.execute(
+                    """
+                    SELECT url
+                    FROM content_links
+                    WHERE url = %s
+                    GROUP BY url
+                    HAVING COUNT(DISTINCT role_id) BETWEEN 2 AND 25;
+                    """,
+                    (url,),
+                )
+            url_row = cur.fetchone()
+            if url_row is None:
+                return None
+
+            url = str(url_row[0])
+            cur.execute(
+                """
+                SELECT DISTINCT ON (cl.role_id)
+                    cl.role_id,
+                    CASE
+                        WHEN ri.member_name IS NOT NULL AND ri.group_name IS NOT NULL
+                            THEN ri.member_name || ' (' || ri.group_name || ')'
+                        ELSE COALESCE(ri.member_name, ri.group_name, cl.role_id)
+                    END AS role_label
+                FROM content_links cl
+                LEFT JOIN role_info ri ON ri.role_id = cl.role_id
+                WHERE cl.url = %s
+                ORDER BY cl.role_id, cl.uploaded_date DESC NULLS LAST;
+                """,
+                (url,),
+            )
+            roles = tuple(DisambiguationRole(role_id=str(row[0]), label=str(row[1])) for row in cur.fetchall())
+
+    return DisambiguationCandidate(url=url, roles=roles)
+
+
+def apply_disambiguation(url: str, selected_role_ids: tuple[str, ...]) -> int:
+    """Confirm a URL's selected roles and suppress every other role assignment."""
+
+    with POOL.connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE content_links
+                SET disambiguated = TRUE,
+                    num_reports = CASE
+                        WHEN role_id = ANY(%s::TEXT[]) THEN 0
+                        ELSE GREATEST(num_reports, %s)
+                    END
+                WHERE url = %s;
+                """,
+                (list(selected_role_ids), REPORT_THRESHOLD, url),
             )
             return cur.rowcount
 
