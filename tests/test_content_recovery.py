@@ -81,12 +81,12 @@ class ContentRecoveryTests(unittest.TestCase):
 
     @patch("src.content_recovery.RECOVERY_VERIFICATION_POLL_ATTEMPTS", 2)
     @patch("src.content_recovery.time.sleep")
-    def test_verify_uploaded_link_does_not_reject_an_embed_that_is_still_pending(self, sleep: Mock) -> None:
+    def test_verify_uploaded_link_accepts_an_embed_that_is_still_pending(self, sleep: Mock) -> None:
         discord_client = Mock()
         discord_client.create_message.return_value = {"id": "123"}
         discord_client.get_message.return_value = {"embeds": []}
 
-        self.assertIsNone(
+        self.assertTrue(
             content_recovery.verify_uploaded_link(
                 discord_client, content_recovery.RECOVERY_TEST_CHANNEL_ID, "https://i.imgur.com/recovered.mp4"
             )

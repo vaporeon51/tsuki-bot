@@ -56,8 +56,9 @@ DEFAULT_GUILD_ID = "124767749099618304"
 DEFAULT_CHANNEL_ID = "124767749099618304"
 RECOVERY_TEST_CHANNEL_ID = "1536908360673271918"
 RECOVERY_VERIFICATION_POLL_INTERVAL_SECONDS = 2
-# Discord can take several minutes to generate an Imgur embed.
-RECOVERY_VERIFICATION_POLL_ATTEMPTS = 150
+# Give Discord a brief chance to return an explicit bad embed. A missing embed
+# is treated optimistically as live because Discord may take much longer.
+RECOVERY_VERIFICATION_POLL_ATTEMPTS = 6
 RECOVERY_VERIFICATION_WORKERS = 4
 DISCORD_API_BASE = "https://discord.com/api/v10"
 IMGUR_API_BASE = "https://api.imgur.com/3"
@@ -1416,8 +1417,8 @@ def mark_recovery_exhausted(connection: psycopg.Connection[Any], candidate: Cand
             return cursor.fetchone() is not None
 
 
-def verify_uploaded_link(discord_client: DiscordClient, channel_id: str, uploaded_url: str) -> bool | None:
-    """Return the unfurl result, or ``None`` when Discord has not embedded it yet."""
+def verify_uploaded_link(discord_client: DiscordClient, channel_id: str, uploaded_url: str) -> bool:
+    """Return false only when Discord has produced an explicitly broken embed."""
 
     posted_message = discord_client.create_message(channel_id, uploaded_url)
     message_id = posted_message["id"]
@@ -1427,7 +1428,10 @@ def verify_uploaded_link(discord_client: DiscordClient, channel_id: str, uploade
             return not is_message_broken_link(verified_message)
         if attempt < RECOVERY_VERIFICATION_POLL_ATTEMPTS - 1:
             time.sleep(RECOVERY_VERIFICATION_POLL_INTERVAL_SECONDS)
-    return None
+    # Discord may take minutes or longer to create an embed. The direct upload
+    # already succeeded, so retain the replacement until an explicit bad embed
+    # proves otherwise.
+    return True
 
 
 def verify_uploaded_link_in_worker(authorization: str, channel_id: str, uploaded_url: str) -> bool:
@@ -1797,24 +1801,6 @@ def finalize_pending_verification(
         return
 
     try:
-        if is_live is None:
-            update_recovery_item(
-                connection,
-                pending.batch_id,
-                pending.candidate,
-                "failed",
-                replacement_url=pending.uploaded.url,
-                recovery_method=pending.recovery_method,
-                imgur_id=pending.uploaded.media_id,
-                downloaded_size=pending.downloaded_size,
-                trimmed_size=pending.trimmed_size,
-                trimmed_sha256=pending.trimmed_sha256,
-                error="Discord did not produce an embed before recovery verification timed out",
-                num_reports_after=pending.candidate.num_reports,
-            )
-            print(f"PENDING {pending.candidate.content_link_id}: Discord did not unfurl {pending.uploaded.url}")
-            return
-
         if is_live:
             apply_success(
                 connection,
