@@ -49,7 +49,6 @@ from src.config.constants import (  # isort: skip
     CONTENT_RECOVERY_MAX_GENERATION,
     CONTENT_RECOVERY_MAX_UPLOADS_PER_HOUR,
     CONTENT_RECOVERY_UPLOAD_INTERVAL,
-    DEAD_LINK_CHECK_CHANNEL_ID,
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -1677,13 +1676,13 @@ def dead_link_role_notice(url: str, role_labels: tuple[str, ...]) -> str:
 
 
 def send_recovery_dead_link_notice(
-    connection: psycopg.Connection[Any], notification_client: DiscordClient, url: str
+    connection: psycopg.Connection[Any], notification_client: DiscordClient, channel_id: str, url: str
 ) -> None:
-    """Notify the dead-link channel after recovery explicitly confirms a bad embed."""
+    """Notify the recovery verification channel after an explicitly bad embed."""
 
     try:
         notification_client.create_message(
-            str(DEAD_LINK_CHECK_CHANNEL_ID),
+            channel_id,
             dead_link_role_notice(url, recovery_role_labels(connection, url)),
         )
     except Exception as error:
@@ -1826,6 +1825,7 @@ def finalize_pending_verification(
     future: Future[bool],
     pending: PendingVerification,
     notification_client: DiscordClient | None = None,
+    notification_channel_id: str | None = None,
 ) -> None:
     """Apply a completed unfurl result on the batch thread, where the DB connection lives."""
 
@@ -1877,8 +1877,10 @@ def finalize_pending_verification(
             pending.uploaded.media_id,
             pending.replacement_generation,
         )
-        if notification_client is not None:
-            send_recovery_dead_link_notice(connection, notification_client, pending.candidate.url)
+        if notification_client is not None and notification_channel_id is not None:
+            send_recovery_dead_link_notice(
+                connection, notification_client, notification_channel_id, pending.candidate.url
+            )
         print(f"DEAD {pending.candidate.content_link_id}: Discord could not unfurl {pending.uploaded.url}")
     except Exception as error:
         update_recovery_item(
@@ -1902,13 +1904,16 @@ def finalize_completed_verifications(
     connection: psycopg.Connection[Any],
     pending_verifications: list[tuple[Future[bool], PendingVerification]],
     notification_client: DiscordClient | None = None,
+    notification_channel_id: str | None = None,
 ) -> list[tuple[Future[bool], PendingVerification]]:
     """Commit completed verifier results without waiting for the rest of the batch."""
 
     still_pending: list[tuple[Future[bool], PendingVerification]] = []
     for future, pending in pending_verifications:
         if future.done():
-            finalize_pending_verification(connection, future, pending, notification_client)
+            finalize_pending_verification(
+                connection, future, pending, notification_client, notification_channel_id
+            )
         else:
             still_pending.append((future, pending))
     return still_pending
@@ -2000,11 +2005,20 @@ def run_recovery_batch(config: RecoveryBatchConfig, *, print_candidates_output: 
                         break
 
                     pending_verifications = finalize_completed_verifications(
-                        connection, pending_verifications, notification_client
+                        connection,
+                        pending_verifications,
+                        notification_client,
+                        config.verification_channel_id,
                     )
 
                 for future, pending in pending_verifications:
-                    finalize_pending_verification(connection, future, pending, notification_client)
+                    finalize_pending_verification(
+                        connection,
+                        future,
+                        pending,
+                        notification_client,
+                        config.verification_channel_id,
+                    )
         finally:
             try:
                 summary = summarize_recovery_batch(connection, batch_id, len(candidates), stopped, stop_reason)
