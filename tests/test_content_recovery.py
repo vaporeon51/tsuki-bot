@@ -79,6 +79,22 @@ class ContentRecoveryTests(unittest.TestCase):
 
         sleep.assert_called_once_with(content_recovery.RECOVERY_VERIFICATION_POLL_INTERVAL_SECONDS)
 
+    @patch("src.content_recovery.RECOVERY_VERIFICATION_POLL_ATTEMPTS", 2)
+    @patch("src.content_recovery.time.sleep")
+    def test_verify_uploaded_link_does_not_reject_an_embed_that_is_still_pending(self, sleep: Mock) -> None:
+        discord_client = Mock()
+        discord_client.create_message.return_value = {"id": "123"}
+        discord_client.get_message.return_value = {"embeds": []}
+
+        self.assertIsNone(
+            content_recovery.verify_uploaded_link(
+                discord_client, content_recovery.RECOVERY_TEST_CHANNEL_ID, "https://i.imgur.com/recovered.mp4"
+            )
+        )
+
+        self.assertEqual(discord_client.get_message.call_count, 2)
+        sleep.assert_called_once_with(content_recovery.RECOVERY_VERIFICATION_POLL_INTERVAL_SECONDS)
+
     def test_record_dead_replacement_keeps_the_content_link_dead(self) -> None:
         connection = MagicMock()
         cursor = connection.cursor.return_value.__enter__.return_value
