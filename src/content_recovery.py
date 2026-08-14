@@ -1676,19 +1676,23 @@ def dead_link_role_notice(url: str, role_labels: tuple[str, ...]) -> str:
 
 
 def send_recovery_dead_link_notice(
-    connection: psycopg.Connection[Any], notification_client: DiscordClient, channel_id: str, url: str
+    connection: psycopg.Connection[Any],
+    notification_client: DiscordClient,
+    channel_id: str,
+    replacement_url: str,
+    source_url: str,
 ) -> None:
     """Notify the recovery verification channel after an explicitly bad embed."""
 
     try:
         notification_client.create_message(
             channel_id,
-            dead_link_role_notice(url, recovery_role_labels(connection, url)),
+            dead_link_role_notice(replacement_url, recovery_role_labels(connection, source_url)),
         )
     except Exception as error:
         # The recovery result is already committed; a notification failure must
         # not rewrite it as a failed recovery.
-        print(f"Failed to send dead-link notice for recovered URL {url}: {error}")
+        print(f"Failed to send dead-link notice for recovered URL {replacement_url}: {error}")
 
 
 def sha256(path: Path) -> str:
@@ -1879,7 +1883,11 @@ def finalize_pending_verification(
         )
         if notification_client is not None and notification_channel_id is not None:
             send_recovery_dead_link_notice(
-                connection, notification_client, notification_channel_id, pending.candidate.url
+                connection,
+                notification_client,
+                notification_channel_id,
+                pending.uploaded.url,
+                pending.candidate.url,
             )
         print(f"DEAD {pending.candidate.content_link_id}: Discord could not unfurl {pending.uploaded.url}")
     except Exception as error:
