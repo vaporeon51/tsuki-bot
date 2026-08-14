@@ -27,10 +27,8 @@ from src.config.constants import (
     DEAD_LINK_CHECK_CHANNEL_ID,
     DEAD_LINK_CHECK_INTERVAL_SECONDS,
     REDDIT_FEED_WINDOW,
-    REPORT_EMOTE,
     TSUKI_HARAM_HUG,
     TSUKI_NOM,
-    UPVOTE_EMOTE,
 )
 from src.content_update import run_content_links_update
 from src.db.bias_rater import (
@@ -49,6 +47,7 @@ from src.db.guild_settings import get_min_age, set_min_age
 from src.db.reddit_feeds import get_subscriptions, set_reddit_feed, unset_feeds
 from src.db.stats import add_stat_count
 from src.db.utils import (
+    get_disambiguation_candidate,
     get_closest_roles,
     get_dead_link_check_cursor,
     get_latest_links_for_roles,
@@ -65,9 +64,10 @@ from src.discord_ui.bias_rater import (
     build_group_leaderboard_embeds,
     build_leaderboard_embeds,
 )
+from src.discord_ui.disambiguate import DisambiguationView
 from src.llm_chat import HANNI_EMOJIS, OVERLOAD_MESSAGES, ChatMsg, generate_chat_response
 from src.rate_limit import ChannelRateLimiter, Decision
-from src.reaction.gather import gather_dead_link, gather_reactions
+from src.reaction.gather import gather_dead_link
 from src.reddit_feeds import update_reddit_feeds
 
 TOKEN = os.environ.get("TOKEN")
@@ -128,6 +128,14 @@ bot = TsukiBot()
 def start_loop_once(loop: tasks.Loop) -> None:
     if not loop.is_running():
         loop.start()
+
+
+def schedule_sent_link_dead_check(message: discord.Message, url: str) -> None:
+    """Check a delivered feed link without adding reactions or other message UI."""
+
+    task = asyncio.create_task(gather_dead_link(message, url))
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
 
 
 @tasks.loop(seconds=60 * 60 * 12)
@@ -351,26 +359,9 @@ async def feed(interaction: discord.Interaction, query: str | None = None):
         await interaction.edit_original_response(content=text)
         return
 
-    # Send the message and get the sent message
     await interaction.edit_original_response(content=role_ids_and_urls[0][1])
     sent_message = await interaction.original_response()
-
-    # React to the sent message with feedback emotes
-    emotes = [UPVOTE_EMOTE, REPORT_EMOTE]
-    for emote in emotes:
-        await sent_message.add_reaction(emote)
-
-    # Count emotes and update database
-    sent_message = await interaction.channel.fetch_message(sent_message.id)
-    task = asyncio.create_task(
-        gather_reactions(
-            message=sent_message,
-            url=role_ids_and_urls[0][1],
-            role_id=role_ids_and_urls[0][0],
-        )
-    )
-    _background_tasks.add(task)
-    task.add_done_callback(_background_tasks.discard)
+    schedule_sent_link_dead_check(sent_message, role_ids_and_urls[0][1])
 
     await asyncio.to_thread(add_stat_count, "feed")
 
@@ -430,8 +421,8 @@ async def latest(
         return
 
     message = await interaction.original_response()
-    for role_id, url in role_ids_and_urls:
-        await asyncio.shield(perform_autofeed_critical_operations(message, url, role_id))
+    for _role_id, url in role_ids_and_urls:
+        await asyncio.shield(perform_autofeed_critical_operations(message, url))
         if url != role_ids_and_urls[-1][1]:
             await asyncio.sleep(4)
 
@@ -537,8 +528,8 @@ async def autofeed_command(interaction: discord.Interaction, query: str | None, 
 
     text = []
     try:
-        for role_id, url in role_ids_and_urls:
-            await asyncio.shield(perform_autofeed_critical_operations(message, url, role_id))
+        for _role_id, url in role_ids_and_urls:
+            await asyncio.shield(perform_autofeed_critical_operations(message, url))
             if url != role_ids_and_urls[-1][1]:
                 await asyncio.sleep(interval)
 
@@ -549,16 +540,9 @@ async def autofeed_command(interaction: discord.Interaction, query: str | None, 
         await message.reply(" ".join(text))
 
 
-async def perform_autofeed_critical_operations(message: discord.Message, url: str, role_id: str):
-    message = await message.reply(content=url)
-
-    emotes = [UPVOTE_EMOTE, REPORT_EMOTE]
-    for emote in emotes:
-        await message.add_reaction(emote)
-
-    reaction_gathering_task = asyncio.create_task(gather_reactions(message, url, role_id))
-    _background_tasks.add(reaction_gathering_task)
-    reaction_gathering_task.add_done_callback(_background_tasks.discard)
+async def perform_autofeed_critical_operations(message: discord.Message, url: str):
+    sent_message = await message.reply(content=url)
+    schedule_sent_link_dead_check(sent_message, url)
 
 
 async def bias_autofeed_command(interaction: discord.Interaction, scope: str, interval: int, count: int):
@@ -618,8 +602,8 @@ async def bias_autofeed_command(interaction: discord.Interaction, scope: str, in
 
     text_parts = []
     try:
-        for role_id, url in role_ids_and_urls:
-            await asyncio.shield(perform_autofeed_critical_operations(message, url, role_id))
+        for _role_id, url in role_ids_and_urls:
+            await asyncio.shield(perform_autofeed_critical_operations(message, url))
             if url != role_ids_and_urls[-1][1]:
                 await asyncio.sleep(interval)
 
@@ -755,6 +739,23 @@ class Admin(discord.app_commands.Group):
     def __init__(self):
         super().__init__(name="admin", description="Commands for managing HanniBot")
         return
+
+    @discord.app_commands.command(
+        name="disambiguate",
+        description="Review the role assignments for one unresolved multi-role link.",
+    )
+    async def disambiguate(self, interaction: discord.Interaction):
+        # The database can take longer than Discord's three-second interaction deadline.
+        await interaction.response.defer()
+        candidate = await asyncio.to_thread(get_disambiguation_candidate)
+        if candidate is None:
+            await interaction.edit_original_response(content="No unresolved multi-role links are available.")
+            return
+
+        view = DisambiguationView(interaction.user.id, candidate)
+        message = await interaction.edit_original_response(content=candidate.url, view=view)
+        view.message = message
+        await asyncio.to_thread(add_stat_count, "admin_disambiguate")
 
     @discord.app_commands.command(
         name="cancel_all_autofeeds",
