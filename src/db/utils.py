@@ -159,6 +159,51 @@ def get_latest_links_for_roles(
             return result
 
 
+def get_top_links_for_roles(
+    num_links: int, skip: int, min_age: str, role_ids: list[str] | None = None
+) -> list[tuple[str, str]] | None:
+    """Get the highest-rated links, optionally limited to matching role IDs.
+
+    Original Discord reactions provide the starting signal, while the bot's
+    upvotes and downvotes refine it after delivery.
+    """
+
+    with POOL.connection() as conn:
+        with conn.cursor() as cur:
+            base_query = """
+                WITH bday AS (
+                    SELECT role_id, birthday
+                    FROM role_info
+                    {role_filter}
+                ),
+                ordered_urls AS (
+                    SELECT bday.role_id, cl.url
+                    FROM bday
+                    JOIN content_links cl
+                    ON bday.role_id = cl.role_id
+                    WHERE NOT cl.is_dead
+                    AND cl.num_reports < %s
+                    AND cl.uploaded_date > bday.birthday + %s::INTERVAL
+                    ORDER BY
+                        COALESCE(cl.initial_reaction_count, 0) + cl.num_upvotes - cl.num_downvotes DESC,
+                        cl.uploaded_date DESC
+                    LIMIT %s OFFSET %s
+                )
+                SELECT role_id, url
+                FROM ordered_urls;
+            """
+
+            role_filter = ""
+            params = [REPORT_THRESHOLD, min_age, num_links, skip]
+            if role_ids:
+                role_filter = "WHERE role_id = ANY(%s)"
+                params.insert(0, role_ids)
+
+            cur.execute(base_query.format(role_filter=role_filter), params)
+            result = cur.fetchall()
+            return result or None
+
+
 def get_random_link_for_each_role(
     role_ids: list[str], min_age: str, *, use_recently_sent_queue: bool = True
 ) -> list[tuple[str, str]] | None:

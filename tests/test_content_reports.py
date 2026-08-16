@@ -61,6 +61,19 @@ class ContentReportQueryTests(unittest.TestCase):
         query = cursor.execute.call_args.args[0]
         self.assertIn("num_upvotes - num_downvotes", query)
 
+    @patch("src.db.utils.POOL")
+    def test_top_content_uses_original_reactions_and_bot_votes(self, pool: MagicMock) -> None:
+        cursor = pool.connection.return_value.__enter__.return_value.cursor.return_value.__enter__.return_value
+        cursor.fetchall.return_value = []
+
+        self.assertIsNone(utils.get_top_links_for_roles(3, 1, "18 year", ["role-1"]))
+
+        query, params = cursor.execute.call_args.args
+        self.assertIn("initial_reaction_count", query)
+        self.assertIn("num_upvotes - cl.num_downvotes", query)
+        self.assertIn("ORDER BY", query)
+        self.assertEqual(params, [["role-1"], utils.REPORT_THRESHOLD, "18 year", 3, 1])
+
     def test_recent_pair_limiter_cools_down_only_the_same_user_and_link(self) -> None:
         limiter = RecentPairRateLimiter(cooldown_seconds=300, capacity=20)
 
