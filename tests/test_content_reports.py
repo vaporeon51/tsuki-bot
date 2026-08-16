@@ -61,6 +61,34 @@ class ContentReportQueryTests(unittest.TestCase):
         query = cursor.execute.call_args.args[0]
         self.assertIn("num_upvotes - num_downvotes", query)
 
+    @patch("src.db.utils.POOL")
+    def test_top_content_uses_original_reactions_and_bot_votes(self, pool: MagicMock) -> None:
+        cursor = pool.connection.return_value.__enter__.return_value.cursor.return_value.__enter__.return_value
+        cursor.fetchall.return_value = []
+
+        self.assertIsNone(utils.get_latest_links_for_roles(3, 1, "18 year", ["role-1"], order="top"))
+
+        query, params = cursor.execute.call_args.args
+        self.assertIn("initial_reaction_count", query)
+        self.assertIn("num_upvotes - cl.num_downvotes", query)
+        self.assertIn("ORDER BY", query)
+        self.assertEqual(params, [["role-1"], utils.REPORT_THRESHOLD, "18 year", 3, 1])
+
+    @patch("src.db.utils.POOL")
+    def test_oldest_content_is_ordered_ascending(self, pool: MagicMock) -> None:
+        cursor = pool.connection.return_value.__enter__.return_value.cursor.return_value.__enter__.return_value
+        cursor.fetchall.return_value = []
+
+        self.assertIsNone(utils.get_latest_links_for_roles(2, 4, "18 year", order="oldest"))
+
+        query, params = cursor.execute.call_args.args
+        self.assertIn("ORDER BY cl.uploaded_date ASC", query)
+        self.assertEqual(params, [utils.REPORT_THRESHOLD, "18 year", 2, 4])
+
+    def test_content_order_rejects_unknown_values(self) -> None:
+        with self.assertRaises(ValueError):
+            utils.get_latest_links_for_roles(1, 0, "18 year", order="sideways")
+
     def test_recent_pair_limiter_cools_down_only_the_same_user_and_link(self) -> None:
         limiter = RecentPairRateLimiter(cooldown_seconds=300, capacity=20)
 

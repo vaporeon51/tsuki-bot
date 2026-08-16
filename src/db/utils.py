@@ -1,5 +1,6 @@
 from collections import defaultdict, deque
 from dataclasses import dataclass
+from typing import Literal
 
 from src.config.constants import (
     CONTENT_RECOVERY_MAX_GENERATION,
@@ -116,9 +117,21 @@ def get_random_roles(count: int, min_age: str) -> list[str] | None:
 
 
 def get_latest_links_for_roles(
-    num_links: int, skip: int, min_age: str, role_ids: list[str] | None = None
+    num_links: int,
+    skip: int,
+    min_age: str,
+    role_ids: list[str] | None = None,
+    order: Literal["latest", "oldest", "top"] = "latest",
 ) -> list[tuple[str, str]] | None:
-    """Get the latest links for role ids, or all roles if role ids are none."""
+    """Get ordered links for role IDs, or all roles if role IDs are absent."""
+
+    order_by = {
+        "latest": "cl.uploaded_date DESC",
+        "oldest": "cl.uploaded_date ASC",
+        "top": "COALESCE(cl.initial_reaction_count, 0) + cl.num_upvotes - cl.num_downvotes DESC, cl.uploaded_date DESC",
+    }.get(order)
+    if order_by is None:
+        raise ValueError(f"Unsupported content order: {order}")
 
     with POOL.connection() as conn:
         with conn.cursor() as cur:
@@ -136,7 +149,7 @@ def get_latest_links_for_roles(
                     WHERE NOT cl.is_dead
                     AND cl.num_reports < %s
                     AND cl.uploaded_date > bday.birthday + %s::INTERVAL
-                    ORDER BY cl.uploaded_date DESC
+                    ORDER BY {order_by}
                     LIMIT %s OFFSET %s
                 )
                 SELECT role_id, url
@@ -149,7 +162,7 @@ def get_latest_links_for_roles(
                 role_filter = "WHERE role_id = ANY(%s)"
                 params.insert(0, role_ids)
 
-            query = base_query.format(role_filter=role_filter)
+            query = base_query.format(role_filter=role_filter, order_by=order_by)
             cur.execute(query, params)
             result = cur.fetchall()
 
@@ -157,7 +170,6 @@ def get_latest_links_for_roles(
                 return None
 
             return result
-
 
 def get_random_link_for_each_role(
     role_ids: list[str], min_age: str, *, use_recently_sent_queue: bool = True
