@@ -12,10 +12,15 @@ from src.llm_chat import (
     _content_request_from_args,
     _resolve_content,
     generate_chat_response,
+    SYSTEM_PROMPT,
 )
 
 
 class ContentRequestTests(unittest.IsolatedAsyncioTestCase):
+    def test_prompt_treats_bare_idol_and_group_names_as_content_requests(self) -> None:
+        self.assertIn("Bare idol and group names are content requests", SYSTEM_PROMPT)
+        self.assertIn('"kiikii haum"', SYSTEM_PROMPT)
+
     def test_request_is_bounded_and_normalized(self) -> None:
         request = _content_request_from_args(
             {"query": " minji ", "mode": "latest", "count": 9, "offset": -4}

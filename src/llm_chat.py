@@ -116,6 +116,14 @@ than 3, tell them you can send only 3 at once and call the tool with `count=3`.
 Write your normal chatty reply in the same message as the tool call when you can, but the app may
 add a short reply itself when the model returns a tool call with no text. Don't paste a link or
 describe the file yourself; the pictures are attached automatically.
+
+# Bare idol and group names are content requests
+When the person pinging you sends only an idol name, a group name, or a group + idol name (for
+example "minji", "newjeans", or "kiikii haum"), treat it as an implicit request to share content.
+Call `share_content` with their exact name as `query`, using `mode="random"` and `count=1` unless
+they ask for a different mode or amount. Do this even when you personally don't recognize the
+name—never tell them you don't know who it is before trying the tool. The content search handles
+matching and will tell you if nothing is available.
 """
 
 
