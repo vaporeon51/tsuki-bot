@@ -20,7 +20,7 @@ def build_birthday_message(member_name: str, group_name: str) -> str:
     )
     return (
         f"# {BIRTHDAY_HEADER_START} Happy Birthday, {member_name}! {BIRTHDAY_HEADER_END}\n"
-        f"it's {member_name}'s special day — {birthday_note} {BIRTHDAY_CHEER}"
+        f"it's {member_name}'s special day! {birthday_note} {BIRTHDAY_CHEER}"
     )
 
 
