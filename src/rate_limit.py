@@ -1,4 +1,5 @@
 import time
+from collections import OrderedDict
 from enum import Enum
 
 
@@ -40,3 +41,27 @@ class ChannelRateLimiter:
             self._last_notified[channel_id] = now
             return Decision.DENY_NOTIFY
         return Decision.DENY_SILENT
+
+
+class RecentPairRateLimiter:
+    """Small FIFO cooldown cache keyed by a user and idol role."""
+
+    def __init__(self, cooldown_seconds: float, capacity: int):
+        self.cooldown_seconds = cooldown_seconds
+        self.capacity = capacity
+        self._entries: OrderedDict[tuple[int, str], float] = OrderedDict()
+
+    def allow(self, user_id: int, role_id: str, *, now: float | None = None) -> bool:
+        timestamp = time.monotonic() if now is None else now
+        key = (user_id, role_id)
+        previous = self._entries.get(key)
+
+        if previous is not None and timestamp - previous < self.cooldown_seconds:
+            self._entries.move_to_end(key)
+            return False
+
+        self._entries[key] = timestamp
+        self._entries.move_to_end(key)
+        while len(self._entries) > self.capacity:
+            self._entries.popitem(last=False)
+        return True
