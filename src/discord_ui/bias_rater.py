@@ -521,7 +521,7 @@ class VoteView(discord.ui.View):
             )
             await interaction.channel.send(embed=summary)
             await interaction.edit_original_response(
-                content="Daily bracket complete — summary posted.",
+                content="Daily bracket complete! Summary posted.",
                 embeds=[],
                 view=None,
             )
@@ -578,9 +578,9 @@ class VoteView(discord.ui.View):
                 voter_icon_url=interaction.user.display_avatar.url,
             )
             await interaction.channel.send(embed=summary_embed)
-            content = "Session ended — summary posted."
+            content = "Session ended! Summary posted."
         else:
-            content = "Session ended."
+            content = "Session ended!"
 
         await interaction.edit_original_response(
             content=content,
