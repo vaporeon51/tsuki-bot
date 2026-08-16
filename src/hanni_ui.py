@@ -46,7 +46,7 @@ def feed_started_message(label: str, sort_by: str, count: int, interval: int, *,
     sort_label = {"random": "random", "latest": "latest", "oldest": "oldest", "top": "top-rated"}[sort_by]
     subject = f"{bias_scope} bias" if bias_scope else f"{label}"
     return (
-        f"starting a {sort_label} feed of `{subject}` {HANNI_EMOJIS['eating / nom']}\n"
+        f"starting a {sort_label} feed of `{subject}` {HANNI_EMOJIS['eating / nom']}! "
         f"{count} posts, one every {interval} seconds"
     )
 
@@ -54,7 +54,7 @@ def feed_started_message(label: str, sort_by: str, count: int, interval: int, *,
 def feed_finished_message(cancelled: bool = False) -> str:
     if cancelled:
         return f"an admin stopped the feed {HANNI_EMOJIS['oh no / embarrassed']}"
-    return f"all done, hope you found a favorite {HANNI_EMOJIS['bowing / thank you']}"
+    return f"all done! hope you found a favorite {HANNI_EMOJIS['bowing / thank you']}"
 
 
 def content_not_found_message(query: str) -> str:
