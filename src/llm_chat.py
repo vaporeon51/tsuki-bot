@@ -237,7 +237,13 @@ class ChatMsg:
 @dataclass
 class ChatResult:
     text: str
-    attachments: list[str] = field(default_factory=list)
+    attachments: list["ContentAttachment"] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class ContentAttachment:
+    role_id: str
+    url: str
 
 
 # Other users' custom emojis: collapse `<:name:id>` / `<a:name:id>` to `:name:`
@@ -324,7 +330,7 @@ def _build_messages(history: list[ChatMsg]) -> list[BaseMessage]:
     return messages
 
 
-async def _resolve_content(query: str, min_age: str) -> str | None:
+async def _resolve_content(query: str, min_age: str) -> ContentAttachment | None:
     q = query.strip().lower()
     if q in ("", "random", "r"):
         role_ids = await asyncio.to_thread(get_random_roles, 1, min_age)
@@ -335,7 +341,8 @@ async def _resolve_content(query: str, min_age: str) -> str | None:
     pairs = await asyncio.to_thread(get_random_link_for_each_role, role_ids, min_age)
     if not pairs:
         return None
-    return pairs[0][1]
+    role_id, url = pairs[0]
+    return ContentAttachment(role_id=role_id, url=url)
 
 
 async def generate_chat_response(history: list[ChatMsg], min_age: str) -> ChatResult:
@@ -357,13 +364,13 @@ async def generate_chat_response(history: list[ChatMsg], min_age: str) -> ChatRe
     try:
         # Resolve each content request against the DB.
         messages.append(ai)
-        attachments: list[str] = []
+        attachments: list[ContentAttachment] = []
         any_failed = False
         for call in content_calls:
-            url = await _resolve_content(call["args"].get("query", "random"), min_age)
-            if url:
-                if url not in attachments:
-                    attachments.append(url)
+            attachment = await _resolve_content(call["args"].get("query", "random"), min_age)
+            if attachment:
+                if attachment.url not in {item.url for item in attachments}:
+                    attachments.append(attachment)
                 tool_content = "Shared the picture with the channel."
             else:
                 any_failed = True

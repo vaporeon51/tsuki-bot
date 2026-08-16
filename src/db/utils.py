@@ -32,6 +32,16 @@ class DisambiguationCandidate:
     roles: tuple[DisambiguationRole, ...]
 
 
+@dataclass(frozen=True)
+class ContentVoteScore:
+    upvotes: int
+    downvotes: int
+
+    @property
+    def value(self) -> int:
+        return self.upvotes - self.downvotes
+
+
 def get_closest_roles(query: str, min_age: str, count: int = 1) -> list[str] | None:
     """Get up to count closest role IDs to the query."""
     with POOL.connection() as conn:
@@ -173,7 +183,10 @@ def get_random_link_for_each_role(
                 numbered_urls AS (
                     SELECT bday.role_id, cl.url,
                     ROW_NUMBER() OVER (PARTITION BY bday.role_id ORDER BY
-                        RANDOM() * POWER(GREATEST(CAST(LEAST(initial_reaction_count / 3, %s) + num_upvotes AS FLOAT), 1.0), %s) DESC)
+                        RANDOM() * POWER(GREATEST(CAST(
+                            LEAST(initial_reaction_count / 3, %s) + num_upvotes - num_downvotes
+                            AS FLOAT
+                        ), 1.0), %s) DESC)
                         AS row_num
                     FROM bday
                     JOIN content_links cl ON bday.role_id = cl.role_id
@@ -241,6 +254,72 @@ def mark_url_dead(url: str) -> int:
                 (CONTENT_RECOVERY_MAX_GENERATION, url),
             )
             return cur.rowcount
+
+
+def add_content_report(role_id: str, url: str) -> int:
+    """Increment reports for the delivered role/link pairing."""
+
+    with POOL.connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE content_links
+                SET num_reports = num_reports + 1
+                WHERE role_id = %s
+                  AND url = %s;
+                """,
+                (role_id, url),
+            )
+            return cur.rowcount
+
+
+def get_content_vote_score(role_id: str, url: str) -> ContentVoteScore:
+    """Return the existing bot-vote totals for a delivered role/link pair."""
+
+    with POOL.connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT
+                    COALESCE(MAX(num_upvotes), 0),
+                    COALESCE(MAX(num_downvotes), 0)
+                FROM content_links
+                WHERE role_id = %s
+                  AND url = %s;
+                """,
+                (role_id, url),
+            )
+            row = cur.fetchone()
+            return ContentVoteScore(upvotes=int(row[0]), downvotes=int(row[1]))
+
+
+def add_content_vote(role_id: str, url: str, direction: str) -> ContentVoteScore:
+    """Add one bot vote and return the updated aggregate totals."""
+
+    if direction not in {"up", "down"}:
+        raise ValueError(f"Unsupported content vote direction: {direction}")
+
+    column = "num_upvotes" if direction == "up" else "num_downvotes"
+    with POOL.connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""
+                WITH updated AS (
+                    UPDATE content_links
+                    SET {column} = {column} + 1
+                    WHERE role_id = %s
+                      AND url = %s
+                    RETURNING num_upvotes, num_downvotes
+                )
+                SELECT
+                    COALESCE(MAX(num_upvotes), 0),
+                    COALESCE(MAX(num_downvotes), 0)
+                FROM updated;
+                """,
+                (role_id, url),
+            )
+            row = cur.fetchone()
+            return ContentVoteScore(upvotes=int(row[0]), downvotes=int(row[1]))
 
 
 def get_disambiguation_candidate(url: str | None = None) -> DisambiguationCandidate | None:

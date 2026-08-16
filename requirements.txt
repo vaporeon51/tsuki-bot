@@ -22,4 +22,4 @@ mypy
 isort
 
 # App
-discord.py
+discord.py>=2.4

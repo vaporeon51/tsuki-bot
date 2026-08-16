@@ -47,9 +47,9 @@ from src.db.guild_settings import get_min_age, set_min_age
 from src.db.reddit_feeds import get_subscriptions, set_reddit_feed, unset_feeds
 from src.db.stats import add_stat_count
 from src.db.utils import (
-    get_disambiguation_candidate,
     get_closest_roles,
     get_dead_link_check_cursor,
+    get_disambiguation_candidate,
     get_latest_links_for_roles,
     get_live_urls_for_dead_link_check,
     get_random_link_for_each_role,
@@ -64,6 +64,7 @@ from src.discord_ui.bias_rater import (
     build_group_leaderboard_embeds,
     build_leaderboard_embeds,
 )
+from src.discord_ui.content_reports import ContentFeedbackView, ContentReportButton, ContentVoteButton
 from src.discord_ui.disambiguate import DisambiguationView
 from src.llm_chat import HANNI_EMOJIS, OVERLOAD_MESSAGES, ChatMsg, generate_chat_response
 from src.rate_limit import ChannelRateLimiter, Decision
@@ -97,6 +98,7 @@ class TsukiBot(commands.Bot):
         self.tree.add_command(BirthdayFeed())
         self.tree.add_command(RedditFeed())
         self.tree.add_command(BiasRater())
+        self.add_dynamic_items(ContentReportButton, ContentVoteButton)
         asyncio.create_task(self.custom_event_handler())
 
     async def close(self):
@@ -359,9 +361,11 @@ async def feed(interaction: discord.Interaction, query: str | None = None):
         await interaction.edit_original_response(content=text)
         return
 
-    await interaction.edit_original_response(content=role_ids_and_urls[0][1])
+    role_id, url = role_ids_and_urls[0]
+    view = await ContentFeedbackView.create(role_id, url)
+    await interaction.edit_original_response(content=url, view=view)
     sent_message = await interaction.original_response()
-    schedule_sent_link_dead_check(sent_message, role_ids_and_urls[0][1])
+    schedule_sent_link_dead_check(sent_message, url)
 
     await asyncio.to_thread(add_stat_count, "feed")
 
@@ -421,8 +425,8 @@ async def latest(
         return
 
     message = await interaction.original_response()
-    for _role_id, url in role_ids_and_urls:
-        await asyncio.shield(perform_autofeed_critical_operations(message, url))
+    for role_id, url in role_ids_and_urls:
+        await asyncio.shield(perform_autofeed_critical_operations(message, role_id, url))
         if url != role_ids_and_urls[-1][1]:
             await asyncio.sleep(4)
 
@@ -528,8 +532,8 @@ async def autofeed_command(interaction: discord.Interaction, query: str | None, 
 
     text = []
     try:
-        for _role_id, url in role_ids_and_urls:
-            await asyncio.shield(perform_autofeed_critical_operations(message, url))
+        for role_id, url in role_ids_and_urls:
+            await asyncio.shield(perform_autofeed_critical_operations(message, role_id, url))
             if url != role_ids_and_urls[-1][1]:
                 await asyncio.sleep(interval)
 
@@ -540,8 +544,9 @@ async def autofeed_command(interaction: discord.Interaction, query: str | None, 
         await message.reply(" ".join(text))
 
 
-async def perform_autofeed_critical_operations(message: discord.Message, url: str):
-    sent_message = await message.reply(content=url)
+async def perform_autofeed_critical_operations(message: discord.Message, role_id: str, url: str):
+    view = await ContentFeedbackView.create(role_id, url)
+    sent_message = await message.reply(content=url, view=view)
     schedule_sent_link_dead_check(sent_message, url)
 
 
@@ -602,8 +607,8 @@ async def bias_autofeed_command(interaction: discord.Interaction, scope: str, in
 
     text_parts = []
     try:
-        for _role_id, url in role_ids_and_urls:
-            await asyncio.shield(perform_autofeed_critical_operations(message, url))
+        for role_id, url in role_ids_and_urls:
+            await asyncio.shield(perform_autofeed_critical_operations(message, role_id, url))
             if url != role_ids_and_urls[-1][1]:
                 await asyncio.sleep(interval)
 
@@ -1106,8 +1111,10 @@ async def handle_tsuki_chat(message: discord.Message) -> None:
                 result.text or HANNI_EMOJIS["despair"],
                 allowed_mentions=discord.AllowedMentions(users=True, roles=False, everyone=False),
             )
-            for url in result.attachments:
-                await channel.send(url)
+            for attachment in result.attachments:
+                view = await ContentFeedbackView.create(attachment.role_id, attachment.url)
+                sent_message = await channel.send(attachment.url, view=view)
+                schedule_sent_link_dead_check(sent_message, attachment.url)
         except Exception as e:
             raise RuntimeError(f"LLM completed but discord send failed: {e}")
 
