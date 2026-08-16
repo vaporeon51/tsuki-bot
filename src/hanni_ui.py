@@ -22,7 +22,7 @@ HANNI_EMOJIS: dict[str, str] = {
     "cursed / derp": "<a:hanni_cursed:1515062711309045871>",
     "excited / jumping": "<a:hanni_excited:1515062712919396402>",
     "hello / wave": "<a:hanni_hello:1515062715415134389>",
-    "eating / nom": "<a:hanni_nom:1515062716702916658>",
+    "eating / nom": "<a:hannichomp:1538525142999900200>",
     "punch / boop": "<a:hanni_punch:1515062717809954898>",
     "swag / cool": "<a:hanni_swag:1515062719378620496>",
     "despair": "<:hanni_despair:1515066515408425031>",
