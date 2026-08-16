@@ -44,16 +44,16 @@ class ChannelRateLimiter:
 
 
 class RecentPairRateLimiter:
-    """Small FIFO cooldown cache keyed by a user and idol role."""
+    """Small FIFO cooldown cache keyed by a user and content URL."""
 
     def __init__(self, cooldown_seconds: float, capacity: int):
         self.cooldown_seconds = cooldown_seconds
         self.capacity = capacity
         self._entries: OrderedDict[tuple[int, str], float] = OrderedDict()
 
-    def allow(self, user_id: int, role_id: str, *, now: float | None = None) -> bool:
+    def allow(self, user_id: int, url: str, *, now: float | None = None) -> bool:
         timestamp = time.monotonic() if now is None else now
-        key = (user_id, role_id)
+        key = (user_id, url)
         previous = self._entries.get(key)
 
         if previous is not None and timestamp - previous < self.cooldown_seconds:

@@ -64,7 +64,7 @@ from src.discord_ui.bias_rater import (
     build_group_leaderboard_embeds,
     build_leaderboard_embeds,
 )
-from src.discord_ui.content_reports import ContentReportButton, ContentReportView
+from src.discord_ui.content_reports import ContentFeedbackView, ContentReportButton, ContentVoteButton
 from src.discord_ui.disambiguate import DisambiguationView
 from src.llm_chat import HANNI_EMOJIS, OVERLOAD_MESSAGES, ChatMsg, generate_chat_response
 from src.rate_limit import ChannelRateLimiter, Decision
@@ -98,7 +98,7 @@ class TsukiBot(commands.Bot):
         self.tree.add_command(BirthdayFeed())
         self.tree.add_command(RedditFeed())
         self.tree.add_command(BiasRater())
-        self.add_dynamic_items(ContentReportButton)
+        self.add_dynamic_items(ContentReportButton, ContentVoteButton)
         asyncio.create_task(self.custom_event_handler())
 
     async def close(self):
@@ -362,7 +362,8 @@ async def feed(interaction: discord.Interaction, query: str | None = None):
         return
 
     role_id, url = role_ids_and_urls[0]
-    await interaction.edit_original_response(content=url, view=ContentReportView(role_id, url))
+    view = await ContentFeedbackView.create(role_id, url)
+    await interaction.edit_original_response(content=url, view=view)
     sent_message = await interaction.original_response()
     schedule_sent_link_dead_check(sent_message, url)
 
@@ -544,7 +545,8 @@ async def autofeed_command(interaction: discord.Interaction, query: str | None, 
 
 
 async def perform_autofeed_critical_operations(message: discord.Message, role_id: str, url: str):
-    sent_message = await message.reply(content=url, view=ContentReportView(role_id, url))
+    view = await ContentFeedbackView.create(role_id, url)
+    sent_message = await message.reply(content=url, view=view)
     schedule_sent_link_dead_check(sent_message, url)
 
 
@@ -1110,10 +1112,8 @@ async def handle_tsuki_chat(message: discord.Message) -> None:
                 allowed_mentions=discord.AllowedMentions(users=True, roles=False, everyone=False),
             )
             for attachment in result.attachments:
-                sent_message = await channel.send(
-                    attachment.url,
-                    view=ContentReportView(attachment.role_id, attachment.url),
-                )
+                view = await ContentFeedbackView.create(attachment.role_id, attachment.url)
+                sent_message = await channel.send(attachment.url, view=view)
                 schedule_sent_link_dead_check(sent_message, attachment.url)
         except Exception as e:
             raise RuntimeError(f"LLM completed but discord send failed: {e}")

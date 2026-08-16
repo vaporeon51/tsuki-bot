@@ -32,6 +32,16 @@ class DisambiguationCandidate:
     roles: tuple[DisambiguationRole, ...]
 
 
+@dataclass(frozen=True)
+class ContentVoteScore:
+    upvotes: int
+    downvotes: int
+
+    @property
+    def value(self) -> int:
+        return self.upvotes - self.downvotes
+
+
 def get_closest_roles(query: str, min_age: str, count: int = 1) -> list[str] | None:
     """Get up to count closest role IDs to the query."""
     with POOL.connection() as conn:
@@ -276,6 +286,55 @@ def add_content_report(role_id: str, url: str, reason: str) -> int:
                     (role_id, url),
                 )
             return cur.rowcount
+
+
+def get_content_vote_score(role_id: str, url: str) -> ContentVoteScore:
+    """Return the existing bot-vote totals for a delivered role/link pair."""
+
+    with POOL.connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT
+                    COALESCE(MAX(num_upvotes), 0),
+                    COALESCE(MAX(num_downvotes), 0)
+                FROM content_links
+                WHERE role_id = %s
+                  AND url = %s;
+                """,
+                (role_id, url),
+            )
+            row = cur.fetchone()
+            return ContentVoteScore(upvotes=int(row[0]), downvotes=int(row[1]))
+
+
+def add_content_vote(role_id: str, url: str, direction: str) -> ContentVoteScore:
+    """Add one bot vote and return the updated aggregate totals."""
+
+    if direction not in {"up", "down"}:
+        raise ValueError(f"Unsupported content vote direction: {direction}")
+
+    column = "num_upvotes" if direction == "up" else "num_downvotes"
+    with POOL.connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""
+                WITH updated AS (
+                    UPDATE content_links
+                    SET {column} = {column} + 1
+                    WHERE role_id = %s
+                      AND url = %s
+                    RETURNING num_upvotes, num_downvotes
+                )
+                SELECT
+                    COALESCE(MAX(num_upvotes), 0),
+                    COALESCE(MAX(num_downvotes), 0)
+                FROM updated;
+                """,
+                (role_id, url),
+            )
+            row = cur.fetchone()
+            return ContentVoteScore(upvotes=int(row[0]), downvotes=int(row[1]))
 
 
 def get_disambiguation_candidate(url: str | None = None) -> DisambiguationCandidate | None:
