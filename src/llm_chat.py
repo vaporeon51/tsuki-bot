@@ -14,6 +14,7 @@ from src.db.utils import (
     get_random_link_for_each_role,
     get_random_roles,
 )
+from src.hanni_ui import HANNI_EMOJIS
 
 # Models tried in order; we advance to the next one only on a rate limit.
 # (All must support native function calling.)
@@ -23,42 +24,6 @@ MODELS = [
     "gemma-4-31b-it",  # fallback
 ]
 MAX_TOKENS = 2048
-
-# Custom server emojis Hanni can use, keyed by a short description. Discord renders
-# these literal strings inline (`<a:name:id>` for animated, `<:name:id>` for static),
-# so we hand them to the model verbatim and it copies them into its reply.
-HANNI_EMOJIS: dict[str, str] = {
-    "sad": "<a:hanni_sad:1514631028973633546>",
-    "ooooh / teasing": "<a:hanni_ouuu:1514631027601965217>",
-    "hug": "<a:hanni_minji_hug:1514631025978900602>",
-    "blowing a kiss": "<a:hanni_kissme:1514631023910981683>",
-    "thinking": "<:hanni_think:1514630252104515585>",
-    "omg / shocked": "<:hanni_omg:1514630248325447770>",
-    "oh no / embarrassed": "<:hanni_notlikethis:1514630247486591016>",
-    "mad": "<:hanni_mad:1514630245032919110>",
-    "kiss": "<a:hanni_kiss:1514630242013155458>",
-    "laughing": "<a:hanni_kek:1514630240062935171>",
-    "giggling": "<a:hanni_giggle:1514630238124900464>",
-    "cozy / comfy": "<:hanni_cozyblanket:1514630236522938408>",
-    "awkward smile": "<a:hanni_awkwardsmile:1514630233716690974>",
-    "wink": "<:cat_wink:1514630232232034344>",
-    "screaming / excited": "<a:cat_screaming:1514630231129067560>",
-    "pat / there there": "<a:bear_pat:1514630230445396019>",
-    "scream / very excited": "<a:haerin_scream:1515062708071038997>",
-    "bowing / thank you": "<a:hanni_bow:1515062709685584062>",
-    "cursed / derp": "<a:hanni_cursed:1515062711309045871>",
-    "excited / jumping": "<a:hanni_excited:1515062712919396402>",
-    "hello / wave": "<a:hanni_hello:1515062715415134389>",
-    "eating / nom": "<a:hanni_nom:1515062716702916658>",
-    "punch / boop": "<a:hanni_punch:1515062717809954898>",
-    "swag / cool": "<a:hanni_swag:1515062719378620496>",
-    "despair": "<:hanni_despair:1515066515408425031>",
-    "no no / finger wag": "<a:hanni_no:1515066516775633066>",
-    "pull hearts / flirt": "<a:hanni_pull_hearts:1515066517933527041>",
-    "shake my head / no": "<a:hanni_smh:1515066520089268414>",
-    "typing / chatting": "<a:hanni_typing:1515066521129320601>",
-    "yikes / cringe": "<a:hanni_yikes:1515066523172077730>",
-}
 
 _EMOJI_GUIDE = "\n".join(f"- {meaning}: {code}" for meaning, code in HANNI_EMOJIS.items())
 
@@ -151,6 +116,14 @@ than 3, tell them you can send only 3 at once and call the tool with `count=3`.
 Write your normal chatty reply in the same message as the tool call when you can, but the app may
 add a short reply itself when the model returns a tool call with no text. Don't paste a link or
 describe the file yourself; the pictures are attached automatically.
+
+# Bare idol and group names are content requests
+When the person pinging you sends only an idol name, a group name, or a group + idol name (for
+example "minji", "newjeans", or "kiikii haum"), treat it as an implicit request to share content.
+Call `share_content` with their exact name as `query`, using `mode="random"` and `count=1` unless
+they ask for a different mode or amount. Do this even when you personally don't recognize the
+name—never tell them you don't know who it is before trying the tool. The content search handles
+matching and will tell you if nothing is available.
 """
 
 

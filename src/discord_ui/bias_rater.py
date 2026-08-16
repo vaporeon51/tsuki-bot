@@ -3,6 +3,8 @@ from dataclasses import dataclass, field
 
 import discord
 
+from src.hanni_ui import HANNI_BLUSH, HANNI_GOLD, HANNI_LILAC, HANNI_MINT
+
 from src.db.bias_rater import (
     GroupLeaderboard,
     Leaderboard,
@@ -86,7 +88,7 @@ class VoteSummaryEmbed(discord.Embed):
         """
         super().__init__(
             title="Bias Rater Session Summary",
-            color=discord.Color.purple(),
+            color=discord.Color(HANNI_BLUSH),
         )
         if voter_name:
             self.set_author(name=voter_name, icon_url=voter_icon_url)
@@ -113,7 +115,7 @@ def build_round_embeds(left_idol, right_idol, round_num: int) -> list[discord.Em
             f"➡️ **{right_idol[1]}** ({right_idol[2]})\n\n"
             "Vote for your bias!"
         ),
-        color=discord.Color.blue(),
+        color=discord.Color(HANNI_LILAC),
         url=_EMBED_GROUP_URL,
     )
     if left_idol[4]:
@@ -136,7 +138,7 @@ def build_daily_round_embeds(left_idol, right_idol, bracket: BracketState) -> li
             f"➡️ **{right_idol[1]}** ({right_idol[2]})\n\n"
             "Vote for your bias!"
         ),
-        color=discord.Color.gold(),
+        color=discord.Color(HANNI_GOLD),
         url=_EMBED_GROUP_URL,
     )
     if left_idol[4]:
@@ -158,7 +160,7 @@ def build_daily_summary_embed(
     embed = discord.Embed(
         title="🌟 Daily Bias Bracket",
         description=f"🏆 **{champion[1]}** ({champion[2]}) takes the crown!",
-        color=discord.Color.gold(),
+        color=discord.Color(HANNI_GOLD),
     )
     if voter_name:
         embed.set_author(name=voter_name, icon_url=voter_icon_url)
@@ -205,7 +207,7 @@ def build_leaderboard_embeds(
     header = discord.Embed(
         title=f"🏆 {title}",
         description="\n".join(lines) if lines else "No entries yet.",
-        color=discord.Color.gold(),
+        color=discord.Color(HANNI_GOLD),
         url=_EMBED_GROUP_URL,
     )
     footer = f"Based on {leaderboard.vote_count:,} votes"
@@ -307,7 +309,7 @@ def build_group_leaderboard_embeds(title: str, leaderboard: GroupLeaderboard) ->
     header = discord.Embed(
         title=f"🏆 {title}",
         description="\n".join(lines) if lines else "No entries yet.",
-        color=discord.Color.gold(),
+        color=discord.Color(HANNI_GOLD),
         url=_EMBED_GROUP_URL,
     )
     header.set_footer(
@@ -330,7 +332,7 @@ def build_result_embed(selected, unselected, pw: int, pl: int) -> discord.Embed:
     embed = discord.Embed(
         title=f"You chose {selected[1]}!",
         description=f"**{selected[1]}** ({selected[2]}) over {unselected[1]} ({unselected[2]})",
-        color=discord.Color.green(),
+        color=discord.Color(HANNI_MINT),
     )
     embed.add_field(
         name="Personal Bias Score",
@@ -519,7 +521,7 @@ class VoteView(discord.ui.View):
             )
             await interaction.channel.send(embed=summary)
             await interaction.edit_original_response(
-                content="Daily bracket complete — summary posted.",
+                content="Daily bracket complete! Summary posted.",
                 embeds=[],
                 view=None,
             )
@@ -576,9 +578,9 @@ class VoteView(discord.ui.View):
                 voter_icon_url=interaction.user.display_avatar.url,
             )
             await interaction.channel.send(embed=summary_embed)
-            content = "Session ended — summary posted."
+            content = "Session ended! Summary posted."
         else:
-            content = "Session ended."
+            content = "Session ended!"
 
         await interaction.edit_original_response(
             content=content,
