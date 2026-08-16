@@ -13,7 +13,6 @@ from src.db.utils import (
     get_latest_links_for_roles,
     get_random_link_for_each_role,
     get_random_roles,
-    get_top_links_for_roles,
 )
 
 # Models tried in order; we advance to the next one only on a rate limit.
@@ -143,10 +142,11 @@ Available emojis — copy the full code on the right, exactly:
 # Sharing kpop content
 When it's natural to share a picture or gif of an idol or group, call the `share_content` tool.
 It can immediately share at most 3 pieces of content — it does NOT start a timed autofeed. Use
-`mode="random"` for a surprise/random pick, `mode="latest"` for the newest uploads, or `mode="top"`
-for the highest-rated uploads. For latest or top, `offset=0` means the first result, `offset=1`
-means skip it, and so on. Use `query="all"` with latest or top to search across everyone. If someone
-asks for more than 3, tell them you can send only 3 at once and call the tool with `count=3`.
+`mode="random"` for a surprise/random pick, `mode="latest"` for the newest uploads,
+`mode="oldest"` for the earliest uploads, or `mode="top"` for the highest-rated uploads. For
+latest, oldest, or top, `offset=0` means the first result, `offset=1` means skip it, and so on.
+Use `query="all"` with latest, oldest, or top to search across everyone. If someone asks for more
+than 3, tell them you can send only 3 at once and call the tool with `count=3`.
 
 Write your normal chatty reply in the same message as the tool call when you can, but the app may
 add a short reply itself when the model returns a tool call with no text. Don't paste a link or
@@ -157,7 +157,7 @@ describe the file yourself; the pictures are attached automatically.
 @tool
 def share_content(
     query: str = "random",
-    mode: Literal["random", "latest", "top"] = "random",
+    mode: Literal["random", "latest", "oldest", "top"] = "random",
     count: int = 1,
     offset: int = 0,
 ) -> str:
@@ -169,12 +169,12 @@ def share_content(
             or "random" for a random pick. For latest content across everyone,
             use "all". For groups use full names (e.g. hearts2hearts instead of
             h2h, newjeans instead of njz).
-        mode: "random" for random content, "latest" for newest uploads, or
-            "top" for the highest-rated uploads.
+        mode: "random" for random content, "latest" for newest uploads,
+            "oldest" for earliest uploads, or "top" for highest-rated uploads.
         count: Number of attachments to share, from 1 to 3. Never request more
             than 3; tell the user about that limit if they ask for more.
-        offset: For mode="latest" or mode="top", the number of results to
-            skip. Zero means the newest or highest-rated upload, respectively.
+        offset: For mode="latest", mode="oldest", or mode="top", the number
+            of results to skip. Zero means the first matching result.
     """
     # Dispatched manually in generate_chat_response so we can inject the
     # per-guild min_age and run the blocking DB calls off the event loop.
@@ -273,7 +273,7 @@ class ContentAttachment:
 @dataclass(frozen=True)
 class ContentRequest:
     query: str
-    mode: Literal["random", "latest", "top"]
+    mode: Literal["random", "latest", "oldest", "top"]
     count: int
     offset: int
     requested_count: int
@@ -371,8 +371,8 @@ def _content_request_from_args(args: dict[str, Any], remaining: int = MAX_CONTEN
 
     query = str(args.get("query", "random")).strip() or "random"
     raw_mode = str(args.get("mode", "random")).strip().lower()
-    mode: Literal["random", "latest", "top"] = (
-        raw_mode if raw_mode in {"random", "latest", "top"} else "random"
+    mode: Literal["random", "latest", "oldest", "top"] = (
+        raw_mode if raw_mode in {"random", "latest", "oldest", "top"} else "random"
     )
     try:
         requested_count = int(args.get("count", 1))
@@ -401,26 +401,26 @@ async def _resolve_content(request: ContentRequest, min_age: str) -> list[Conten
 
     query = request.query.strip()
     normalized_query = query.lower()
-    if request.mode in {"latest", "top"}:
+    if request.mode in {"latest", "oldest", "top"}:
         if normalized_query in ("", "random", "r", "all", "a"):
-            fetch_links = get_latest_links_for_roles if request.mode == "latest" else get_top_links_for_roles
             pairs = await asyncio.to_thread(
-                fetch_links,
+                get_latest_links_for_roles,
                 num_links=request.count,
                 skip=request.offset,
                 min_age=min_age,
+                order=request.mode,
             )
         else:
             role_ids = await asyncio.to_thread(get_closest_roles, query, min_age, request.count)
             if not role_ids:
                 return []
-            fetch_links = get_latest_links_for_roles if request.mode == "latest" else get_top_links_for_roles
             pairs = await asyncio.to_thread(
-                fetch_links,
+                get_latest_links_for_roles,
                 num_links=request.count,
                 skip=request.offset,
                 min_age=min_age,
                 role_ids=role_ids,
+                order=request.mode,
             )
     else:
         if normalized_query in ("", "random", "r"):
@@ -457,6 +457,14 @@ def _content_fallback_text(requests: list[ContentRequest], attachment_count: int
             "gotchu, these are the latest ones !!"
             if attachment_count > 1
             else "gotchu, here's the latest one !!"
+        )
+    if request.mode == "oldest":
+        if request.offset:
+            return f"gotchu, went forward {request.offset} from the oldest ones for you !!"
+        return (
+            "omg these are the oldies !!"
+            if attachment_count > 1
+            else "omg here's an oldie for you !!"
         )
     if request.mode == "top":
         if request.offset:

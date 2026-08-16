@@ -370,77 +370,23 @@ async def feed(interaction: discord.Interaction, query: str | None = None):
     await asyncio.to_thread(add_stat_count, "feed")
 
 
-@bot.tree.command(name="latest", description="Get latest kpop content using idol or group name.")
-@discord.app_commands.describe(
-    query="Idols and groups you want to include. Use `a` or `all` for all idols.",
-    num_images="Number of images to display. Defaults to 5. Max of 20.",
-    skip="Number of images to skip from the beginning. Defaults to 0.",
-)
-async def latest(
-    interaction: discord.Interaction,
-    query: str | None = None,
-    num_images: int = 5,
-    skip: int = 0,
-):
-    if num_images > 20:
-        await interaction.response.send_message("Cannot send more than 20 links at a time.", ephemeral=True)
-        return
-
-    await interaction.response.defer(thinking=True)
-    if not await asyncio.to_thread(has_completed_daily, interaction.user.id):
-        await interaction.edit_original_response(
-            content=f"Complete today's `/bias daily` before using latest! {TSUKI_NOM}",
-        )
-        return
-
-    min_age = await asyncio.to_thread(get_min_age, interaction.guild_id)
-    if query in [None, "a", "all"]:
-        role_ids_and_urls = await asyncio.to_thread(
-            get_latest_links_for_roles, num_links=num_images, skip=skip, min_age=min_age
-        )
-    else:
-        role_ids = await asyncio.to_thread(get_closest_roles, query, min_age, count=num_images)
-        if not role_ids:
-            text = f"Could not find a role for `{query if query else 'random'}`. This message will disappear in 30s."
-            print(text)
-            await interaction.edit_original_response(content=text)
-            return
-        role_ids_and_urls = await asyncio.to_thread(
-            get_latest_links_for_roles,
-            num_links=num_images,
-            skip=skip,
-            min_age=min_age,
-            role_ids=role_ids,
-        )
-
-    if not role_ids_and_urls:
-        await interaction.edit_original_response(content="Could not find any content with these inputs.")
-        return
-
-    text = f"Fetched latest `{len(role_ids_and_urls)}` images of `{query if query else 'all'}` after skipping first `{skip}` {TSUKI_NOM}"
-    try:
-        await interaction.edit_original_response(content=text)
-    except Exception as e:
-        print(e)
-        return
-
-    message = await interaction.original_response()
-    for role_id, url in role_ids_and_urls:
-        await asyncio.shield(perform_autofeed_critical_operations(message, role_id, url))
-        if url != role_ids_and_urls[-1][1]:
-            await asyncio.sleep(4)
-
-    await asyncio.to_thread(add_stat_count, "latest")
-
-
 @bot.tree.command(
     name="autofeed",
     description="Feast on kpop content automatically",
 )
 @discord.app_commands.describe(
     query="Idols and groups you want to include, 'r' or 'random' to be suprised",
+    sort_by="Order: random (default), latest, oldest, or highest-rated.",
     interval="Seconds between posts (default:20, min:2, max:24 hours)",
     count="Number of posts (default:5, max:120)",
+)
+@discord.app_commands.choices(
+    sort_by=[
+        discord.app_commands.Choice(name="Random", value="random"),
+        discord.app_commands.Choice(name="Latest", value="latest"),
+        discord.app_commands.Choice(name="Oldest", value="oldest"),
+        discord.app_commands.Choice(name="Highest rated", value="top"),
+    ]
 )
 @discord.app_commands.default_permissions(manage_guild=True)
 @discord.app_commands.guild_only()
@@ -449,6 +395,7 @@ async def autofeed(
     query: str | None = None,
     interval: int = 20,
     count: int = 5,
+    sort_by: str = "random",
 ):
     if interval < 2 or interval > 60 * 60 * 24:
         await interaction.response.send_message(
@@ -467,7 +414,7 @@ async def autofeed(
         return
     guild_id = interaction.guild_id
     command_name = "autofeed"
-    task = asyncio.create_task(autofeed_command(interaction, query, interval, count))
+    task = asyncio.create_task(autofeed_command(interaction, query, interval, count, sort_by))
     if guild_id not in bot.active_commands:
         bot.active_commands[guild_id] = {}
     if command_name not in bot.active_commands[guild_id]:
@@ -481,33 +428,53 @@ async def autofeed(
         await asyncio.to_thread(add_stat_count, "autofeed")
 
 
-async def autofeed_command(interaction: discord.Interaction, query: str | None, interval: int, count: int):
+async def autofeed_command(
+    interaction: discord.Interaction, query: str | None, interval: int, count: int, sort_by: str
+):
     if not interaction.response.is_done():
         await interaction.response.defer(thinking=True)
     min_age = await asyncio.to_thread(get_min_age, interaction.guild_id)
-    if query in [None, "r", "random"]:
-        role_ids = await asyncio.to_thread(get_random_roles, count, min_age)
-    else:
-        role_ids = await asyncio.to_thread(get_closest_roles, query, min_age, count)
+    if sort_by == "random":
+        if query in [None, "r", "random"]:
+            role_ids = await asyncio.to_thread(get_random_roles, count, min_age)
+        else:
+            role_ids = await asyncio.to_thread(get_closest_roles, query, min_age, count)
 
-    if not role_ids:
-        text = f"Could not find a role for `{query if query else 'random'}`. This message will disappear in 30s."
-        print(text)
-        message = await interaction.followup.send(content=text, wait=True)
-        await message.delete(delay=30)
-        return
+        if not role_ids:
+            text = f"Could not find a role for `{query if query else 'random'}`. This message will disappear in 30s."
+            print(text)
+            message = await interaction.followup.send(content=text, wait=True)
+            await message.delete(delay=30)
+            return
 
-    # Corrects role_ids to be the length of count if it was too short
-    if role_ids and len(role_ids) < count:
-        temp = len(role_ids)
-        temp = count // temp + 1
-        role_ids = (role_ids * temp)[:count]
+        # Correct role_ids to the requested length when a query has few matches.
+        if len(role_ids) < count:
+            role_ids = (role_ids * count)[:count]
 
-    role_ids_and_urls = await asyncio.to_thread(get_random_link_for_each_role, role_ids=role_ids, min_age=min_age)
-
-    # One retry attempt incase a role had a full recently sent queue
-    if not role_ids_and_urls or len(role_ids_and_urls) != count:
         role_ids_and_urls = await asyncio.to_thread(get_random_link_for_each_role, role_ids=role_ids, min_age=min_age)
+
+        # One retry in case a role had a full recently-sent queue.
+        if not role_ids_and_urls or len(role_ids_and_urls) != count:
+            role_ids_and_urls = await asyncio.to_thread(get_random_link_for_each_role, role_ids=role_ids, min_age=min_age)
+    else:
+        if query in [None, "r", "random", "a", "all"]:
+            role_ids = None
+        else:
+            role_ids = await asyncio.to_thread(get_closest_roles, query, min_age, count)
+            if not role_ids:
+                text = f"Could not find a role for `{query}`. This message will disappear in 30s."
+                print(text)
+                message = await interaction.followup.send(content=text, wait=True)
+                await message.delete(delay=30)
+                return
+        role_ids_and_urls = await asyncio.to_thread(
+            get_latest_links_for_roles,
+            num_links=count,
+            skip=0,
+            min_age=min_age,
+            role_ids=role_ids,
+            order=sort_by,
+        )
 
     # Proceed only if we got more than half of the count urls
     if not role_ids_and_urls or len(role_ids_and_urls) < count // 2:
@@ -517,8 +484,9 @@ async def autofeed_command(interaction: discord.Interaction, query: str | None, 
         await message.delete(delay=30)
         return
 
+    query_label = query if query else ("random" if sort_by == "random" else "all")
     text = (
-        f"Starting feed of `{query if query else 'random'}`!\n"
+        f"Starting `{sort_by}` feed of `{query_label}`!\n"
         + f"Found `{len(role_ids_and_urls)}` ingredient(s) serving every `{interval}` seconds.\n"
         + f"We hope you enjoy your meal {TSUKI_NOM}"
     )
@@ -550,7 +518,9 @@ async def perform_autofeed_critical_operations(message: discord.Message, role_id
     schedule_sent_link_dead_check(sent_message, url)
 
 
-async def bias_autofeed_command(interaction: discord.Interaction, scope: str, interval: int, count: int):
+async def bias_autofeed_command(
+    interaction: discord.Interaction, scope: str, interval: int, count: int, sort_by: str
+):
     if not interaction.response.is_done():
         await interaction.response.defer(thinking=True)
     min_age = await asyncio.to_thread(get_min_age, interaction.guild_id)
@@ -575,14 +545,25 @@ async def bias_autofeed_command(interaction: discord.Interaction, scope: str, in
 
     top_roles = [entry.role_id for entry in tops.entries]
 
-    # Pick randomly with weights and replacement
-    role_ids = random.choices(top_roles, weights=weights, k=count)
-
-    role_ids_and_urls = await asyncio.to_thread(get_random_link_for_each_role, role_ids=role_ids, min_age=min_age)
-
-    # One retry attempt incase a role had a full recently sent queue
-    if not role_ids_and_urls or len(role_ids_and_urls) != count:
+    if sort_by == "random":
+        # Pick randomly with weights and replacement.
+        role_ids = random.choices(top_roles, weights=weights, k=count)
         role_ids_and_urls = await asyncio.to_thread(get_random_link_for_each_role, role_ids=role_ids, min_age=min_age)
+
+        # One retry in case a role had a full recently-sent queue.
+        if not role_ids_and_urls or len(role_ids_and_urls) != count:
+            role_ids_and_urls = await asyncio.to_thread(get_random_link_for_each_role, role_ids=role_ids, min_age=min_age)
+    else:
+        # For ordered feeds, all ranked idols are eligible and the requested
+        # content order determines which of their uploads comes first.
+        role_ids_and_urls = await asyncio.to_thread(
+            get_latest_links_for_roles,
+            num_links=count,
+            skip=0,
+            min_age=min_age,
+            role_ids=top_roles,
+            order=sort_by,
+        )
 
     # Proceed only if we got more than half of the count urls
     if not role_ids_and_urls or len(role_ids_and_urls) < count // 2:
@@ -593,7 +574,7 @@ async def bias_autofeed_command(interaction: discord.Interaction, scope: str, in
         return
 
     text = (
-        f"Starting {scope} bias feed!\n"
+        f"Starting {scope} bias feed sorted by `{sort_by}`!\n"
         + f"Found `{len(role_ids_and_urls)}` ingredient(s) serving every `{interval}` seconds.\n"
         + f"We hope you enjoy your meal {TSUKI_NOM}"
     )
@@ -950,6 +931,7 @@ class BiasRater(discord.app_commands.Group):
     )
     @discord.app_commands.describe(
         scope="Rankings to base feed off of: personal, server, or global (default: personal)",
+        sort_by="Order: random (default), latest, oldest, or highest-rated.",
         interval="Seconds between posts (default:20, min:2, max:24 hours)",
         count="Number of posts (default:5, max:120)",
     )
@@ -958,7 +940,13 @@ class BiasRater(discord.app_commands.Group):
             discord.app_commands.Choice(name="Personal", value="personal"),
             discord.app_commands.Choice(name="Server", value="server"),
             discord.app_commands.Choice(name="Global", value="global"),
-        ]
+        ],
+        sort_by=[
+            discord.app_commands.Choice(name="Random", value="random"),
+            discord.app_commands.Choice(name="Latest", value="latest"),
+            discord.app_commands.Choice(name="Oldest", value="oldest"),
+            discord.app_commands.Choice(name="Highest rated", value="top"),
+        ],
     )
     async def autofeed(
         self,
@@ -966,6 +954,7 @@ class BiasRater(discord.app_commands.Group):
         scope: str = "personal",
         interval: int = 20,
         count: int = 5,
+        sort_by: str = "random",
     ):
         if interval < 2 or interval > 60 * 60 * 24:
             await interaction.response.send_message(
@@ -986,7 +975,7 @@ class BiasRater(discord.app_commands.Group):
 
         guild_id = interaction.guild_id
         command_name = "autofeed"  # using autofeed command name so /admin cancel works on this too
-        task = asyncio.create_task(bias_autofeed_command(interaction, scope, interval, count))
+        task = asyncio.create_task(bias_autofeed_command(interaction, scope, interval, count, sort_by))
         if guild_id not in bot.active_commands:
             bot.active_commands[guild_id] = {}
         if command_name not in bot.active_commands[guild_id]:

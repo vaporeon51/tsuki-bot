@@ -48,14 +48,22 @@ class ContentRequestTests(unittest.IsolatedAsyncioTestCase):
             skip=4,
             min_age="18 year",
             role_ids=["minji"],
+            order="latest",
         )
 
-    @patch("src.llm_chat.get_top_links_for_roles", return_value=[("minji", "top")])
-    async def test_top_request_uses_the_highest_rated_query(self, top_links) -> None:
+    @patch("src.llm_chat.get_latest_links_for_roles", return_value=[("minji", "top")])
+    async def test_top_request_uses_the_highest_rated_query(self, ordered_links) -> None:
         attachments = await _resolve_content(ContentRequest("all", "top", 1, 2, 1), "18 year")
 
         self.assertEqual(attachments, [ContentAttachment("minji", "top")])
-        top_links.assert_called_once_with(num_links=1, skip=2, min_age="18 year")
+        ordered_links.assert_called_once_with(num_links=1, skip=2, min_age="18 year", order="top")
+
+    @patch("src.llm_chat.get_latest_links_for_roles", return_value=[("minji", "oldest")])
+    async def test_oldest_request_uses_the_earliest_upload_query(self, ordered_links) -> None:
+        attachments = await _resolve_content(ContentRequest("all", "oldest", 1, 3, 1), "18 year")
+
+        self.assertEqual(attachments, [ContentAttachment("minji", "oldest")])
+        ordered_links.assert_called_once_with(num_links=1, skip=3, min_age="18 year", order="oldest")
 
     async def test_tool_only_response_uses_a_local_reply_without_second_model_call(self) -> None:
         tool_response = AIMessage(
