@@ -256,38 +256,20 @@ def mark_url_dead(url: str) -> int:
             return cur.rowcount
 
 
-def add_content_report(role_id: str, url: str, reason: str) -> int:
-    """Increment reports for a delivered content item.
-
-    A wrong-idol report applies only to the role/link pairing that was shown.
-    A broken-link report applies to every pairing sharing that URL, because the
-    media is unavailable regardless of which idol it was filed under.
-    """
-
-    if reason not in {"broken_link", "wrong_idol"}:
-        raise ValueError(f"Unsupported content report reason: {reason}")
+def add_content_report(role_id: str, url: str) -> int:
+    """Increment reports for the delivered role/link pairing."""
 
     with POOL.connection() as conn:
         with conn.cursor() as cur:
-            if reason == "broken_link":
-                cur.execute(
-                    """
-                    UPDATE content_links
-                    SET num_reports = num_reports + 1
-                    WHERE url = %s;
-                    """,
-                    (url,),
-                )
-            else:
-                cur.execute(
-                    """
-                    UPDATE content_links
-                    SET num_reports = num_reports + 1
-                    WHERE role_id = %s
-                      AND url = %s;
-                    """,
-                    (role_id, url),
-                )
+            cur.execute(
+                """
+                UPDATE content_links
+                SET num_reports = num_reports + 1
+                WHERE role_id = %s
+                  AND url = %s;
+                """,
+                (role_id, url),
+            )
             return cur.rowcount
 
 

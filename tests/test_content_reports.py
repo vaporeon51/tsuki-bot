@@ -8,34 +8,18 @@ from src.rate_limit import RecentPairRateLimiter
 
 class ContentReportQueryTests(unittest.TestCase):
     @patch("src.db.utils.POOL")
-    def test_broken_link_report_increments_every_matching_url(self, pool: MagicMock) -> None:
-        cursor = pool.connection.return_value.__enter__.return_value.cursor.return_value.__enter__.return_value
-        cursor.rowcount = 2
-
-        updated = utils.add_content_report("role-1", "https://i.imgur.com/example.gif", "broken_link")
-
-        self.assertEqual(updated, 2)
-        query, params = cursor.execute.call_args.args
-        self.assertIn("SET num_reports = num_reports + 1", query)
-        self.assertIn("WHERE url = %s", query)
-        self.assertEqual(params, ("https://i.imgur.com/example.gif",))
-
-    @patch("src.db.utils.POOL")
-    def test_wrong_idol_report_increments_only_the_delivered_pair(self, pool: MagicMock) -> None:
+    def test_report_increments_only_the_delivered_pair(self, pool: MagicMock) -> None:
         cursor = pool.connection.return_value.__enter__.return_value.cursor.return_value.__enter__.return_value
         cursor.rowcount = 1
 
-        updated = utils.add_content_report("role-1", "https://i.imgur.com/example.gif", "wrong_idol")
+        updated = utils.add_content_report("role-1", "https://i.imgur.com/example.gif")
 
         self.assertEqual(updated, 1)
         query, params = cursor.execute.call_args.args
+        self.assertIn("SET num_reports = num_reports + 1", query)
         self.assertIn("WHERE role_id = %s", query)
         self.assertIn("AND url = %s", query)
         self.assertEqual(params, ("role-1", "https://i.imgur.com/example.gif"))
-
-    def test_content_report_rejects_unknown_reason(self) -> None:
-        with self.assertRaises(ValueError):
-            utils.add_content_report("role-1", "https://i.imgur.com/example.gif", "something_else")
 
     @patch("src.db.utils.POOL")
     def test_load_vote_score_uses_existing_content_link_columns(self, pool: MagicMock) -> None:

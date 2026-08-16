@@ -8,37 +8,8 @@ import discord
 from src.db.utils import ContentVoteScore, add_content_report, add_content_vote, get_content_vote_score
 from src.rate_limit import RecentPairRateLimiter
 
-ReportReason = Literal["broken_link", "wrong_idol"]
 _report_rate_limiter = RecentPairRateLimiter(cooldown_seconds=5 * 60, capacity=20)
 _vote_rate_limiter = RecentPairRateLimiter(cooldown_seconds=5 * 60, capacity=20)
-
-
-class ContentReportReasonView(discord.ui.View):
-    """Ephemeral second step so an accidental tap does not record a report."""
-
-    def __init__(self, role_id: str, url: str):
-        super().__init__(timeout=60)
-        self.role_id = role_id
-        self.url = url
-
-    async def _record(self, interaction: discord.Interaction, reason: ReportReason) -> None:
-        if not _report_rate_limiter.allow(interaction.user.id, self.url):
-            await interaction.response.edit_message(
-                content="Thanks — you've already reported this link recently.",
-                view=None,
-            )
-            return
-        await asyncio.to_thread(add_content_report, self.role_id, self.url, reason)
-        label = "broken-link" if reason == "broken_link" else "wrong-idol/group"
-        await interaction.response.edit_message(content=f"Thanks — your {label} report was recorded.", view=None)
-
-    @discord.ui.button(label="Broken link", style=discord.ButtonStyle.secondary, emoji="🔗")
-    async def broken_link_button(self, interaction: discord.Interaction, _button: discord.ui.Button) -> None:
-        await self._record(interaction, "broken_link")
-
-    @discord.ui.button(label="Wrong idol / group", style=discord.ButtonStyle.secondary, emoji="🏷️")
-    async def wrong_idol_button(self, interaction: discord.Interaction, _button: discord.ui.Button) -> None:
-        await self._record(interaction, "wrong_idol")
 
 
 class ContentReportButton(
@@ -73,11 +44,11 @@ class ContentReportButton(
         if not self.url:
             await interaction.response.send_message("I couldn't identify this content item.", ephemeral=True)
             return
-        await interaction.response.send_message(
-            "What should we fix?",
-            view=ContentReportReasonView(self.role_id, self.url),
-            ephemeral=True,
-        )
+        if not _report_rate_limiter.allow(interaction.user.id, self.url):
+            await interaction.response.send_message("You've already reported this link recently.", ephemeral=True)
+            return
+        await asyncio.to_thread(add_content_report, self.role_id, self.url)
+        await interaction.response.send_message("Thanks! Your report was recorded.", ephemeral=True)
 
 
 class ContentVoteButton(
@@ -116,7 +87,7 @@ class ContentVoteButton(
             await interaction.response.send_message("I couldn't identify this content item.", ephemeral=True)
             return
         if not _vote_rate_limiter.allow(interaction.user.id, self.url):
-            await interaction.response.send_message("Thanks — you've already rated this link recently.", ephemeral=True)
+            await interaction.response.defer()
             return
         score = await asyncio.to_thread(add_content_vote, self.role_id, self.url, self.direction)
         await interaction.response.edit_message(view=ContentFeedbackView(self.role_id, self.url, score))
