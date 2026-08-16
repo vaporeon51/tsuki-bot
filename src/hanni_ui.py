@@ -46,8 +46,8 @@ def feed_started_message(label: str, sort_by: str, count: int, interval: int, *,
     sort_label = {"random": "random", "latest": "latest", "oldest": "oldest", "top": "top-rated"}[sort_by]
     subject = f"{bias_scope} bias" if bias_scope else f"{label}"
     return (
-        f"starting a {sort_label} feed of `{subject}` {HANNI_EMOJIS['eating / nom']}! "
-        f"{count} posts, one every {interval} seconds"
+        f"starting a {sort_label} feed of `{subject}`! "
+        f"{count} posts, one every {interval} seconds {HANNI_EMOJIS['eating / nom']}"
     )
 
 
