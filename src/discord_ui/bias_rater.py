@@ -3,7 +3,7 @@ from dataclasses import dataclass, field
 
 import discord
 
-from src.hanni_ui import HANNI_BLUSH, HANNI_GOLD, HANNI_LILAC, HANNI_MINT, HANNI_EMOJIS
+from src.hanni_ui import HANNI_BLUSH, HANNI_GOLD, HANNI_LILAC, HANNI_MINT
 
 from src.db.bias_rater import (
     GroupLeaderboard,
@@ -87,7 +87,7 @@ class VoteSummaryEmbed(discord.Embed):
         matchups contains a list of MatchupLog instances.
         """
         super().__init__(
-            title=f"{HANNI_EMOJIS['giggling']} your bias recap",
+            title="Bias Rater Session Summary",
             color=discord.Color(HANNI_BLUSH),
         )
         if voter_name:
@@ -103,17 +103,17 @@ class VoteSummaryEmbed(discord.Embed):
             description_lines.append(f"**{i}.** {l_disp} vs {r_disp}")
 
         self.description = "\n".join(description_lines) if description_lines else "No votes cast."
-        self.set_footer(text="hanni · /bias leaderboard")
+        self.set_footer(text="Use '/bias leaderboard' to see your updated bias list!")
 
 
 def build_round_embeds(left_idol, right_idol, round_num: int) -> list[discord.Embed]:
     # idol = (role_id, member_name, group_name, global_elo, image_url)
     header = discord.Embed(
-        title=f"{HANNI_EMOJIS['thinking']} head to head · round {round_num}",
+        title=f"Head to Head (Round {round_num})",
         description=(
             f"⬅️ **{left_idol[1]}** ({left_idol[2]})\n"
             f"➡️ **{right_idol[1]}** ({right_idol[2]})\n\n"
-            "who's your bias?"
+            "Vote for your bias!"
         ),
         color=discord.Color(HANNI_LILAC),
         url=_EMBED_GROUP_URL,
@@ -132,11 +132,11 @@ def build_daily_round_embeds(left_idol, right_idol, bracket: BracketState) -> li
     stage = bracket.round_label()
     match_num = bracket.total_matches_played + 1
     header = discord.Embed(
-        title=f"{HANNI_EMOJIS['excited / jumping']} daily bracket · {stage} ({match_num}/7)",
+        title=f"🌟 Daily Bracket — {stage} ({match_num}/7)",
         description=(
             f"⬅️ **{left_idol[1]}** ({left_idol[2]})\n"
             f"➡️ **{right_idol[1]}** ({right_idol[2]})\n\n"
-            "who's your bias?"
+            "Vote for your bias!"
         ),
         color=discord.Color(HANNI_GOLD),
         url=_EMBED_GROUP_URL,
@@ -158,8 +158,8 @@ def build_daily_summary_embed(
     voter_icon_url: str | None = None,
 ) -> discord.Embed:
     embed = discord.Embed(
-        title=f"{HANNI_EMOJIS['swag / cool']} daily bias bracket",
-        description=f"**{champion[1]}** ({champion[2]}) takes the crown!",
+        title="🌟 Daily Bias Bracket",
+        description=f"🏆 **{champion[1]}** ({champion[2]}) takes the crown!",
         color=discord.Color(HANNI_GOLD),
     )
     if voter_name:
@@ -179,7 +179,7 @@ def build_daily_summary_embed(
     if lines:
         embed.add_field(name="Matches", value="\n".join(lines), inline=False)
 
-    embed.set_footer(text="hanni · /bias leaderboard")
+    embed.set_footer(text="Use '/bias leaderboard' to see your updated bias list!")
     return embed
 
 
@@ -205,12 +205,12 @@ def build_leaderboard_embeds(
         lines.append(f"{prefix}  **{entry.member_name}** · {entry.group_name}{score_suffix}")
 
     header = discord.Embed(
-        title=f"{HANNI_EMOJIS['swag / cool']} {title}",
+        title=f"🏆 {title}",
         description="\n".join(lines) if lines else "No entries yet.",
         color=discord.Color(HANNI_GOLD),
         url=_EMBED_GROUP_URL,
     )
-    footer = f"hanni · based on {leaderboard.vote_count:,} votes"
+    footer = f"Based on {leaderboard.vote_count:,} votes"
     if leaderboard.movement_baseline_date is not None:
         footer = f"{footer} · Movement since {leaderboard.movement_baseline_date.isoformat()}"
     header.set_footer(text=footer)
@@ -307,13 +307,13 @@ def build_group_leaderboard_embeds(title: str, leaderboard: GroupLeaderboard) ->
         lines.append(f"{prefix}  **{entry.group_name}** — **{entry.elo}** · Top: {top_members}")
 
     header = discord.Embed(
-        title=f"{HANNI_EMOJIS['swag / cool']} {title}",
+        title=f"🏆 {title}",
         description="\n".join(lines) if lines else "No entries yet.",
         color=discord.Color(HANNI_GOLD),
         url=_EMBED_GROUP_URL,
     )
     header.set_footer(
-        text=f"hanni · based on {leaderboard.vote_count:,} votes · group ELO uses each group's top {leaderboard.top_n} members"
+        text=f"Based on {leaderboard.vote_count:,} votes. Group ELO is average of top {leaderboard.top_n} ranked members."
     )
     if leaderboard.entries and leaderboard.entries[0].image_url:
         header.set_image(url=leaderboard.entries[0].image_url)
@@ -330,7 +330,7 @@ def build_group_leaderboard_embeds(title: str, leaderboard: GroupLeaderboard) ->
 
 def build_result_embed(selected, unselected, pw: int, pl: int) -> discord.Embed:
     embed = discord.Embed(
-        title=f"{HANNI_EMOJIS['pull hearts / flirt']} you chose {selected[1]}!",
+        title=f"You chose {selected[1]}!",
         description=f"**{selected[1]}** ({selected[2]}) over {unselected[1]} ({unselected[2]})",
         color=discord.Color(HANNI_MINT),
     )
