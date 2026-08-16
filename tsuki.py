@@ -27,8 +27,6 @@ from src.config.constants import (
     DEAD_LINK_CHECK_CHANNEL_ID,
     DEAD_LINK_CHECK_INTERVAL_SECONDS,
     REDDIT_FEED_WINDOW,
-    TSUKI_HARAM_HUG,
-    TSUKI_NOM,
 )
 from src.content_update import run_content_links_update
 from src.db.bias_rater import (
@@ -66,7 +64,15 @@ from src.discord_ui.bias_rater import (
 )
 from src.discord_ui.content_reports import ContentFeedbackView, ContentReportButton, ContentVoteButton
 from src.discord_ui.disambiguate import DisambiguationView
-from src.llm_chat import HANNI_EMOJIS, OVERLOAD_MESSAGES, ChatMsg, generate_chat_response
+from src.hanni_ui import (
+    HANNI_EMOJIS,
+    content_not_found_message,
+    content_unavailable_message,
+    feed_finished_message,
+    feed_started_message,
+    transient_error_message,
+)
+from src.llm_chat import OVERLOAD_MESSAGES, ChatMsg, generate_chat_response
 from src.rate_limit import ChannelRateLimiter, Decision
 from src.reaction.gather import gather_dead_link
 from src.reddit_feeds import update_reddit_feeds
@@ -339,7 +345,7 @@ async def feed(interaction: discord.Interaction, query: str | None = None):
     await interaction.response.defer(thinking=True)
     if not await asyncio.to_thread(has_completed_daily, interaction.user.id):
         await interaction.edit_original_response(
-            content=f"Complete today's `/bias daily` before using feed! {TSUKI_NOM}",
+            content=f"complete today's `/bias daily` first {HANNI_EMOJIS['eating / nom']}",
         )
         return
     min_age = await asyncio.to_thread(get_min_age, interaction.guild_id)
@@ -349,14 +355,14 @@ async def feed(interaction: discord.Interaction, query: str | None = None):
         role_ids = await asyncio.to_thread(get_closest_roles, query, min_age)
 
     if not role_ids:
-        text = f"Could not find a role for `{query if query else 'random'}`. This message will disappear in 30s."
+        text = content_not_found_message(query if query else "random")
         print(text)
         await interaction.edit_original_response(content=text)
         return
 
     role_ids_and_urls = await asyncio.to_thread(get_random_link_for_each_role, role_ids, min_age)
     if not role_ids_and_urls:
-        text = f"Could not find a content link for role id `{role_ids[0]}` given query `{query if query else 'random'}`. This message will disappear in 30s."
+        text = content_not_found_message(query if query else "random")
         print(text)
         await interaction.edit_original_response(content=text)
         return
@@ -409,7 +415,7 @@ async def autofeed(
     await interaction.response.defer(thinking=True)
     if not await asyncio.to_thread(has_completed_daily, interaction.user.id):
         await interaction.edit_original_response(
-            content=f"Complete today's `/bias daily` before using autofeed! {TSUKI_NOM}",
+            content=f"complete today's `/bias daily` first {HANNI_EMOJIS['eating / nom']}",
         )
         return
     guild_id = interaction.guild_id
@@ -441,7 +447,7 @@ async def autofeed_command(
             role_ids = await asyncio.to_thread(get_closest_roles, query, min_age, count)
 
         if not role_ids:
-            text = f"Could not find a role for `{query if query else 'random'}`. This message will disappear in 30s."
+            text = content_not_found_message(query if query else "random")
             print(text)
             message = await interaction.followup.send(content=text, wait=True)
             await message.delete(delay=30)
@@ -462,7 +468,7 @@ async def autofeed_command(
         else:
             role_ids = await asyncio.to_thread(get_closest_roles, query, min_age, count)
             if not role_ids:
-                text = f"Could not find a role for `{query}`. This message will disappear in 30s."
+                text = content_not_found_message(query)
                 print(text)
                 message = await interaction.followup.send(content=text, wait=True)
                 await message.delete(delay=30)
@@ -478,18 +484,14 @@ async def autofeed_command(
 
     # Proceed only if we got more than half of the count urls
     if not role_ids_and_urls or len(role_ids_and_urls) < count // 2:
-        text = "Could not find enough pieces of content"
+        text = content_unavailable_message()
         print(text)
         message = await interaction.followup.send(content=text, wait=True)
         await message.delete(delay=30)
         return
 
     query_label = query if query else ("random" if sort_by == "random" else "all")
-    text = (
-        f"Starting `{sort_by}` feed of `{query_label}`!\n"
-        + f"Found `{len(role_ids_and_urls)}` ingredient(s) serving every `{interval}` seconds.\n"
-        + f"We hope you enjoy your meal {TSUKI_NOM}"
-    )
+    text = feed_started_message(query_label, sort_by, len(role_ids_and_urls), interval)
     try:
         await interaction.followup.send(content=text)
     except Exception as e:
@@ -498,7 +500,7 @@ async def autofeed_command(
 
     message = await interaction.original_response()
 
-    text = []
+    cancelled = False
     try:
         for role_id, url in role_ids_and_urls:
             await asyncio.shield(perform_autofeed_critical_operations(message, role_id, url))
@@ -506,10 +508,9 @@ async def autofeed_command(
                 await asyncio.sleep(interval)
 
     except asyncio.CancelledError:
-        text.append("An admin has cancelled this autofeed session.")
+        cancelled = True
     finally:
-        text.append(f"Thank you for choosing HanniBot {TSUKI_HARAM_HUG}")
-        await message.reply(" ".join(text))
+        await message.reply(feed_finished_message(cancelled))
 
 
 async def perform_autofeed_critical_operations(message: discord.Message, role_id: str, url: str):
@@ -533,7 +534,7 @@ async def bias_autofeed_command(
         tops = await asyncio.to_thread(get_personal_leaderboard, interaction.user.id, 15)
 
     if not tops.entries:
-        text = f"Could not find any {scope} bias rankings. Try voting with `/bias vote` first!"
+        text = f"i couldn't find any {scope} bias rankings yet, try `/bias vote` first {HANNI_EMOJIS['thinking']}"
         print(text)
         message = await interaction.followup.send(content=text, wait=True)
         await message.delete(delay=30)
@@ -567,17 +568,13 @@ async def bias_autofeed_command(
 
     # Proceed only if we got more than half of the count urls
     if not role_ids_and_urls or len(role_ids_and_urls) < count // 2:
-        text = "Could not find enough pieces of content"
+        text = content_unavailable_message()
         print(text)
         message = await interaction.followup.send(content=text, wait=True)
         await message.delete(delay=30)
         return
 
-    text = (
-        f"Starting {scope} bias feed sorted by `{sort_by}`!\n"
-        + f"Found `{len(role_ids_and_urls)}` ingredient(s) serving every `{interval}` seconds.\n"
-        + f"We hope you enjoy your meal {TSUKI_NOM}"
-    )
+    text = feed_started_message("bias", sort_by, len(role_ids_and_urls), interval, bias_scope=scope)
     try:
         await interaction.followup.send(content=text)
     except Exception as e:
@@ -586,7 +583,7 @@ async def bias_autofeed_command(
 
     message = await interaction.original_response()
 
-    text_parts = []
+    cancelled = False
     try:
         for role_id, url in role_ids_and_urls:
             await asyncio.shield(perform_autofeed_critical_operations(message, role_id, url))
@@ -594,10 +591,9 @@ async def bias_autofeed_command(
                 await asyncio.sleep(interval)
 
     except asyncio.CancelledError:
-        text_parts.append("An admin has cancelled this autofeed session.")
+        cancelled = True
     finally:
-        text_parts.append(f"Thank you for choosing HanniBot {TSUKI_HARAM_HUG}")
-        await message.reply(" ".join(text_parts))
+        await message.reply(feed_finished_message(cancelled))
 
 
 @discord.app_commands.default_permissions(manage_messages=True)
@@ -800,7 +796,9 @@ class Admin(discord.app_commands.Group):
         await interaction.response.defer(ephemeral=True, thinking=True)
         try:
             await asyncio.to_thread(set_min_age, interaction.guild_id, min_age)
-            await interaction.edit_original_response(content=f"Min age has been successfully set to `{min_age}`.")
+            await interaction.edit_original_response(
+                content=f"min age is now `{min_age}` {HANNI_EMOJIS['bowing / thank you']}"
+            )
         except Exception as e:
             print(f"Guild setting failed for guild {interaction.guild_id}: {e}")
             await interaction.edit_original_response(
@@ -827,7 +825,8 @@ class BiasRater(discord.app_commands.Group):
             view.interaction = interaction
             await interaction.edit_original_response(embeds=view.embeds, view=view)
         except Exception as e:
-            await interaction.edit_original_response(content=f"Could not start voting: {str(e)}")
+            print(f"Could not start bias voting: {e}")
+            await interaction.edit_original_response(content=transient_error_message())
         await asyncio.to_thread(add_stat_count, "bias_vote")
 
     @discord.app_commands.command(
@@ -850,7 +849,8 @@ class BiasRater(discord.app_commands.Group):
             view.interaction = interaction
             await interaction.edit_original_response(embeds=view.embeds, view=view)
         except Exception as e:
-            await interaction.edit_original_response(content=f"Could not start daily: {str(e)}")
+            print(f"Could not start daily bias bracket: {e}")
+            await interaction.edit_original_response(content=transient_error_message())
         await asyncio.to_thread(add_stat_count, "bias_daily")
 
     @discord.app_commands.command(name="leaderboard", description="Show ELO leaderboard")
@@ -885,7 +885,9 @@ class BiasRater(discord.app_commands.Group):
             title = f"Personal Leaderboard for {target_user.display_name}"
 
         if not tops.entries:
-            await interaction.edit_original_response(content="No votes recorded yet!")
+            await interaction.edit_original_response(
+                content=f"no votes recorded yet {HANNI_EMOJIS['sad']}"
+            )
             return
 
         view = LeaderboardView(title, tops) if len(tops.entries) > LEADERBOARD_PAGE_SIZE else None
@@ -918,7 +920,9 @@ class BiasRater(discord.app_commands.Group):
             title = f"Personal Group Leaderboard for {interaction.user.display_name}"
 
         if not tops.entries:
-            await interaction.edit_original_response(content="No votes recorded yet!")
+            await interaction.edit_original_response(
+                content=f"no votes recorded yet {HANNI_EMOJIS['sad']}"
+            )
             return
 
         embeds = build_group_leaderboard_embeds(title, tops)
@@ -969,7 +973,7 @@ class BiasRater(discord.app_commands.Group):
         await interaction.response.defer(thinking=True)
         if not await asyncio.to_thread(has_completed_daily, interaction.user.id):
             await interaction.edit_original_response(
-                content=f"Complete today's `/bias daily` before using autofeed! {TSUKI_NOM}"
+                content=f"complete today's `/bias daily` first {HANNI_EMOJIS['eating / nom']}"
             )
             return
 
@@ -1110,7 +1114,7 @@ async def handle_tsuki_chat(message: discord.Message) -> None:
         await asyncio.to_thread(add_stat_count, "llm_response")
     except Exception as e:
         print(f"LLM chat error: {e}")
-        await channel.send(f"something happened inside me {HANNI_EMOJIS['despair']}\n{e}")
+        await channel.send(transient_error_message())
 
 
 @bot.event
