@@ -92,7 +92,7 @@ class ContentVoteButton(
         self.direction = direction
         super().__init__(
             discord.ui.Button(
-                style=discord.ButtonStyle.success if direction == "up" else discord.ButtonStyle.danger,
+                style=discord.ButtonStyle.secondary,
                 emoji=discord.PartialEmoji(
                     name="small_green_triangle_up31" if direction == "up" else "small_red_triangle_down31",
                     id=1538379192104914994 if direction == "up" else 1538379272383758436,
@@ -130,7 +130,7 @@ class ContentFeedbackView(discord.ui.View):
         self.add_item(ContentVoteButton(role_id, url, "up"))
         self.add_item(
             discord.ui.Button(
-                label=f"Score: {score.value:+d}",
+                label=f"{score.value:+d}",
                 style=discord.ButtonStyle.secondary,
                 disabled=True,
             )

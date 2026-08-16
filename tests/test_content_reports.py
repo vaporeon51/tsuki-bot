@@ -67,6 +67,16 @@ class ContentReportQueryTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             utils.add_content_vote("role-1", "https://i.imgur.com/example.gif", "sideways")
 
+    @patch("src.db.utils.POOL")
+    def test_random_sampling_uses_net_community_votes(self, pool: MagicMock) -> None:
+        cursor = pool.connection.return_value.__enter__.return_value.cursor.return_value.__enter__.return_value
+        cursor.fetchall.return_value = []
+
+        self.assertIsNone(utils.get_random_link_for_each_role(["role-1"], "18 year"))
+
+        query = cursor.execute.call_args.args[0]
+        self.assertIn("num_upvotes - num_downvotes", query)
+
     def test_recent_pair_limiter_cools_down_only_the_same_user_and_link(self) -> None:
         limiter = RecentPairRateLimiter(cooldown_seconds=300, capacity=20)
 
@@ -100,7 +110,7 @@ class ContentReportViewTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(upvote.custom_id, "content_vote:up:123")
         self.assertEqual(upvote.emoji.name, "small_green_triangle_up31")
         self.assertEqual(upvote.emoji.id, 1538379192104914994)
-        self.assertEqual(score.label, "Score: +3")
+        self.assertEqual(score.label, "+3")
         self.assertEqual(downvote.custom_id, "content_vote:down:123")
         self.assertEqual(downvote.emoji.name, "small_red_triangle_down31")
         self.assertEqual(downvote.emoji.id, 1538379272383758436)

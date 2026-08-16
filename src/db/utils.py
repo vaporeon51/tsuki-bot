@@ -183,7 +183,10 @@ def get_random_link_for_each_role(
                 numbered_urls AS (
                     SELECT bday.role_id, cl.url,
                     ROW_NUMBER() OVER (PARTITION BY bday.role_id ORDER BY
-                        RANDOM() * POWER(GREATEST(CAST(LEAST(initial_reaction_count / 3, %s) + num_upvotes AS FLOAT), 1.0), %s) DESC)
+                        RANDOM() * POWER(GREATEST(CAST(
+                            LEAST(initial_reaction_count / 3, %s) + num_upvotes - num_downvotes
+                            AS FLOAT
+                        ), 1.0), %s) DESC)
                         AS row_num
                     FROM bday
                     JOIN content_links cl ON bday.role_id = cl.role_id
