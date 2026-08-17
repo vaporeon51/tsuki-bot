@@ -30,6 +30,8 @@ from src.config.constants import (
 )
 from src.content_update import run_content_links_update
 from src.db.bias_rater import (
+    AUTOFEED_ACTIVITY_POINTS,
+    FEED_ACTIVITY_POINTS,
     cleanup_accumulating_tables,
     create_weekly_leaderboard_snapshots,
     get_global_group_leaderboard,
@@ -73,6 +75,7 @@ from src.hanni_ui import (
     transient_error_message,
 )
 from src.llm_chat import OVERLOAD_MESSAGES, ChatMsg, generate_chat_response
+from src.personal_activity import record_feed_activity
 from src.rate_limit import ChannelRateLimiter, Decision
 from src.reaction.gather import gather_dead_link
 from src.reddit_feeds import update_reddit_feeds
@@ -368,6 +371,8 @@ async def feed(interaction: discord.Interaction, query: str | None = None):
         return
 
     role_id, url = role_ids_and_urls[0]
+    if query not in [None, "r", "random"]:
+        await record_feed_activity(interaction.user.id, [role_id], FEED_ACTIVITY_POINTS)
     view = await ContentFeedbackView.create(role_id, url)
     await interaction.edit_original_response(content=url, view=view)
     sent_message = await interaction.original_response()
@@ -489,6 +494,13 @@ async def autofeed_command(
         message = await interaction.followup.send(content=text, wait=True)
         await message.delete(delay=30)
         return
+
+    if query not in [None, "r", "random", "a", "all"]:
+        await record_feed_activity(
+            interaction.user.id,
+            [role_id for role_id, _url in role_ids_and_urls],
+            AUTOFEED_ACTIVITY_POINTS,
+        )
 
     query_label = query if query else ("random" if sort_by == "random" else "all")
     text = feed_started_message(query_label, sort_by, len(role_ids_and_urls), interval)

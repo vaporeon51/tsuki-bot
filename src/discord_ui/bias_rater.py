@@ -210,7 +210,12 @@ def build_leaderboard_embeds(
         color=discord.Color(HANNI_GOLD),
         url=_EMBED_GROUP_URL,
     )
-    footer = f"Based on {leaderboard.vote_count:,} votes"
+    if leaderboard.vote_count == 0 and leaderboard.has_activity:
+        footer = "Based on feed activity"
+    elif leaderboard.has_activity:
+        footer = f"Based on {leaderboard.vote_count:,} votes + feed activity"
+    else:
+        footer = f"Based on {leaderboard.vote_count:,} votes"
     if leaderboard.movement_baseline_date is not None:
         footer = f"{footer} · Movement since {leaderboard.movement_baseline_date.isoformat()}"
     header.set_footer(text=footer)
@@ -312,9 +317,13 @@ def build_group_leaderboard_embeds(title: str, leaderboard: GroupLeaderboard) ->
         color=discord.Color(HANNI_GOLD),
         url=_EMBED_GROUP_URL,
     )
-    header.set_footer(
-        text=f"Based on {leaderboard.vote_count:,} votes. Group ELO is average of top {leaderboard.top_n} ranked members."
-    )
+    if leaderboard.vote_count == 0 and leaderboard.has_activity:
+        basis = "Based on feed activity"
+    elif leaderboard.has_activity:
+        basis = f"Based on {leaderboard.vote_count:,} votes + feed activity"
+    else:
+        basis = f"Based on {leaderboard.vote_count:,} votes"
+    header.set_footer(text=f"{basis}. Group ELO is average of top {leaderboard.top_n} ranked members.")
     if leaderboard.entries and leaderboard.entries[0].image_url:
         header.set_image(url=leaderboard.entries[0].image_url)
 
