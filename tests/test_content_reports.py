@@ -1,8 +1,8 @@
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from src.db import utils
-from src.discord_ui.content_reports import ContentFeedbackView
+from src.discord_ui.content_reports import ContentFeedbackView, ContentVoteButton
 from src.rate_limit import RecentPairRateLimiter
 
 
@@ -129,6 +129,43 @@ class ContentReportViewTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(report.custom_id, "content_report:123")
         self.assertEqual(report.emoji.name, "important")
         self.assertEqual(report.emoji.id, 1538368125127360652)
+
+    async def test_accepted_upvote_also_updates_personal_activity(self) -> None:
+        interaction = MagicMock()
+        interaction.user.id = 456
+        interaction.response.edit_message = AsyncMock()
+        button = ContentVoteButton("role-1", "https://example.com/one.gif", "up")
+
+        with (
+            patch("src.discord_ui.content_reports._vote_rate_limiter.allow", return_value=True),
+            patch(
+                "src.discord_ui.content_reports.add_content_vote",
+                return_value=utils.ContentVoteScore(upvotes=2, downvotes=0),
+            ),
+            patch("src.discord_ui.content_reports.add_personal_activity", return_value=1) as add_activity,
+        ):
+            await button.callback(interaction)
+
+        add_activity.assert_called_once_with(456, ["role-1"], 2)
+        interaction.response.edit_message.assert_awaited_once()
+
+    async def test_accepted_downvote_has_a_weaker_negative_activity_signal(self) -> None:
+        interaction = MagicMock()
+        interaction.user.id = 456
+        interaction.response.edit_message = AsyncMock()
+        button = ContentVoteButton("role-1", "https://example.com/one.gif", "down")
+
+        with (
+            patch("src.discord_ui.content_reports._vote_rate_limiter.allow", return_value=True),
+            patch(
+                "src.discord_ui.content_reports.add_content_vote",
+                return_value=utils.ContentVoteScore(upvotes=0, downvotes=1),
+            ),
+            patch("src.discord_ui.content_reports.add_personal_activity", return_value=1) as add_activity,
+        ):
+            await button.callback(interaction)
+
+        add_activity.assert_called_once_with(456, ["role-1"], -1)
 
 if __name__ == "__main__":
     unittest.main()

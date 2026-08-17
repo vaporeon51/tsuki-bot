@@ -5,6 +5,11 @@ from typing import Literal
 
 import discord
 
+from src.db.bias_rater import (
+    CONTENT_DOWNVOTE_ACTIVITY_POINTS,
+    CONTENT_UPVOTE_ACTIVITY_POINTS,
+    add_personal_activity,
+)
 from src.db.utils import ContentVoteScore, add_content_report, add_content_vote, get_content_vote_score
 from src.rate_limit import RecentPairRateLimiter
 
@@ -89,7 +94,13 @@ class ContentVoteButton(
         if not _vote_rate_limiter.allow(interaction.user.id, self.url):
             await interaction.response.defer()
             return
-        score = await asyncio.to_thread(add_content_vote, self.role_id, self.url, self.direction)
+        activity_points = (
+            CONTENT_UPVOTE_ACTIVITY_POINTS if self.direction == "up" else CONTENT_DOWNVOTE_ACTIVITY_POINTS
+        )
+        score, _ = await asyncio.gather(
+            asyncio.to_thread(add_content_vote, self.role_id, self.url, self.direction),
+            asyncio.to_thread(add_personal_activity, interaction.user.id, [self.role_id], activity_points),
+        )
         await interaction.response.edit_message(view=ContentFeedbackView(self.role_id, self.url, score))
 
 
