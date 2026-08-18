@@ -5,6 +5,14 @@ from discord.ext import commands
 from src.db.birthday_feed import get_birthday_feeds, get_recent_birthdays, get_recent_messages, log_message
 from src.db.utils import get_random_link_for_each_role
 
+BIRTHDAY_HEADER_START = "<:165691floralbirthdayribbon:1538519874127532142>"
+BIRTHDAY_HEADER_END = "<:483370birthdaycake:1538519874790359090>"
+
+
+def build_birthday_message(member_name: str, group_name: str) -> str:
+    """Build the compact birthday heading used by the birthday feed."""
+    return f"# {BIRTHDAY_HEADER_START} Happy Birthday, {member_name}! {BIRTHDAY_HEADER_END}"
+
 
 async def update_birthday_feeds(bot: commands.Bot) -> None:
     print("Starting birthday feeds...")
@@ -25,8 +33,6 @@ async def update_birthday_feeds(bot: commands.Bot) -> None:
         for role_id, member_name, group_name in recent_birthdays:
             # Check if the message has already been sent
             if (guild_id, channel_id, role_id) not in recent_messages_set:
-                # Format the birthday message
-                message = f"# 🎉 Happy Birthday, {member_name}! 🎂"
                 role_links = await asyncio.to_thread(
                     get_random_link_for_each_role, [role_id], "18 year", use_recently_sent_queue=False
                 )
@@ -44,7 +50,7 @@ async def update_birthday_feeds(bot: commands.Bot) -> None:
                     if channel is None:
                         continue  # Skip if the channel is not found
 
-                    await channel.send(message)
+                    await channel.send(build_birthday_message(member_name, group_name))
                     await channel.send(gif_url)
 
                     # Log the sent message immediately

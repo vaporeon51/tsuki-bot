@@ -1,11 +1,3 @@
-UPVOTE_EMOTE = "❤️"
-REPORT_EMOTE = "⚠️"
-TSUKI_NOM = "🐰"
-TSUKI_HARAM_HUG = "💕"
-
-# Number of seconds to wait before updating db based on reactions
-REACT_WAIT_SEC = 3 * 60
-
 # Number of user reports to hide a role + link combination.
 REPORT_THRESHOLD = 5
 
@@ -43,3 +35,9 @@ CONTENT_RECOVERY_MAX_UPLOADS_PER_HOUR = 100
 # Generation 3 is the final permitted recovery attempt.
 CONTENT_RECOVERY_MAX_GENERATION = 3
 CONTENT_RECOVERY_MAX_ATTEMPTS = 3
+
+# Background dead-link checker.  Probe messages are posted to this private test
+# channel and deleted after Discord has had a moment to unfurl the URL.
+DEAD_LINK_CHECK_CHANNEL_ID = 1537540189595901952
+DEAD_LINK_CHECK_INTERVAL_SECONDS = 7
+DEAD_LINK_CHECK_BATCH_SIZE = 100

@@ -3,6 +3,7 @@ import os
 import random
 import sys
 import tempfile
+from collections import deque
 from pathlib import Path
 
 import discord
@@ -23,15 +24,16 @@ from src.config.constants import (
     CONTENT_RECOVERY_INTERVAL_SECONDS,
     CONTENT_RECOVERY_MAX_UPLOADS_PER_HOUR,
     CONTENT_RECOVERY_UPLOAD_INTERVAL,
+    DEAD_LINK_CHECK_BATCH_SIZE,
+    DEAD_LINK_CHECK_CHANNEL_ID,
+    DEAD_LINK_CHECK_INTERVAL_SECONDS,
     GET_LINKS_COOLDOWN_SECONDS,
     REDDIT_FEED_WINDOW,
-    REPORT_EMOTE,
-    TSUKI_HARAM_HUG,
-    TSUKI_NOM,
-    UPVOTE_EMOTE,
 )
 from src.content_update import run_content_links_update
 from src.db.bias_rater import (
+    AUTOFEED_ACTIVITY_POINTS,
+    FEED_ACTIVITY_POINTS,
     cleanup_accumulating_tables,
     create_weekly_leaderboard_snapshots,
     get_global_group_leaderboard,
@@ -49,10 +51,14 @@ from src.db.stats import add_stat_count
 from src.db.utils import (
     export_live_links_csv,
     get_closest_roles,
+    get_dead_link_check_cursor,
+    get_disambiguation_candidate,
     get_latest_links_for_roles,
+    get_live_urls_for_dead_link_check,
     get_random_link_for_each_role,
     get_random_roles,
     role_autocomplete_matches,
+    set_dead_link_check_cursor,
 )
 from src.discord_ui.bias_rater import (
     LEADERBOARD_MAX_ENTRIES,
@@ -62,15 +68,29 @@ from src.discord_ui.bias_rater import (
     build_group_leaderboard_embeds,
     build_leaderboard_embeds,
 )
-from src.llm_chat import HANNI_EMOJIS, OVERLOAD_MESSAGES, ChatMsg, generate_chat_response
+from src.discord_ui.content_reports import ContentFeedbackView, ContentReportButton, ContentVoteButton
+from src.discord_ui.disambiguate import DisambiguationView
+from src.hanni_ui import (
+    HANNI_EMOJIS,
+    content_not_found_message,
+    content_unavailable_message,
+    feed_finished_message,
+    feed_started_message,
+    transient_error_message,
+)
+from src.llm_chat import OVERLOAD_MESSAGES, ChatMsg, generate_chat_response
+from src.personal_activity import record_feed_activity
 from src.rate_limit import ChannelRateLimiter, Decision
-from src.reaction.gather import gather_reactions
+from src.reaction.gather import gather_dead_link
 from src.reddit_feeds import update_reddit_feeds
 
 TOKEN = os.environ.get("TOKEN")
 OWNER_USER_ID = 1298088341241335841
 OWNER_WHISPER_PREFIX = "whisper "
 _background_tasks = set()
+_dead_link_check_urls: deque[tuple[str, tuple[str, ...]]] = deque()
+_dead_link_check_cursor: str | None = None
+_dead_link_check_cursor_loaded = False
 
 
 class TsukiBot(commands.Bot):
@@ -91,6 +111,7 @@ class TsukiBot(commands.Bot):
         self.tree.add_command(BirthdayFeed())
         self.tree.add_command(RedditFeed())
         self.tree.add_command(BiasRater())
+        self.add_dynamic_items(ContentReportButton, ContentVoteButton)
         asyncio.create_task(self.custom_event_handler())
 
     async def close(self):
@@ -122,6 +143,14 @@ bot = TsukiBot()
 def start_loop_once(loop: tasks.Loop) -> None:
     if not loop.is_running():
         loop.start()
+
+
+def schedule_sent_link_dead_check(message: discord.Message, url: str) -> None:
+    """Check a delivered feed link without adding reactions or other message UI."""
+
+    task = asyncio.create_task(gather_dead_link(message, url))
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
 
 
 @tasks.loop(seconds=60 * 60 * 12)
@@ -207,6 +236,79 @@ async def recover_content_loop():
         print(f"Error with content recovery: {e}")
 
 
+async def next_dead_link_check_url() -> tuple[str, tuple[str, ...]] | None:
+    """Return the next URL in a full, distinct sweep of eligible links."""
+
+    global _dead_link_check_cursor, _dead_link_check_cursor_loaded
+
+    if not _dead_link_check_cursor_loaded:
+        _dead_link_check_cursor = await asyncio.to_thread(get_dead_link_check_cursor)
+        _dead_link_check_cursor_loaded = True
+
+    if not _dead_link_check_urls:
+        urls = await asyncio.to_thread(
+            get_live_urls_for_dead_link_check,
+            _dead_link_check_cursor,
+            DEAD_LINK_CHECK_BATCH_SIZE,
+        )
+        if not urls and _dead_link_check_cursor is not None:
+            _dead_link_check_cursor = None
+            urls = await asyncio.to_thread(
+                get_live_urls_for_dead_link_check,
+                None,
+                DEAD_LINK_CHECK_BATCH_SIZE,
+            )
+
+        if not urls:
+            return None
+
+        _dead_link_check_urls.extend((candidate.url, candidate.role_labels) for candidate in urls)
+
+    return _dead_link_check_urls.popleft()
+
+
+async def save_dead_link_check_cursor(url: str) -> None:
+    """Record a completed check only after Discord verification has finished."""
+
+    global _dead_link_check_cursor
+
+    await asyncio.to_thread(set_dead_link_check_cursor, url)
+    _dead_link_check_cursor = url
+
+
+def dead_link_role_notice(url: str, role_labels: tuple[str, ...]) -> str:
+    """Format a concise test-channel notification for a detected dead link."""
+
+    roles = ", ".join(role_labels) or "Unknown role"
+    return f"⚠️ Dead link detected: <{url}>\nAffected roles: {roles}"[:2000]
+
+
+@tasks.loop(seconds=DEAD_LINK_CHECK_INTERVAL_SECONDS)
+async def dead_link_check_loop():
+    try:
+        candidate = await next_dead_link_check_url()
+        if candidate is None:
+            print("Dead-link checker found no eligible live URLs.")
+            return
+        url, role_labels = candidate
+
+        channel = bot.get_channel(DEAD_LINK_CHECK_CHANNEL_ID)
+        if channel is None:
+            channel = await bot.fetch_channel(DEAD_LINK_CHECK_CHANNEL_ID)
+
+        message = await channel.send(url)
+        marked_count = await gather_dead_link(
+            message,
+            url,
+            wait_seconds=DEAD_LINK_CHECK_INTERVAL_SECONDS,
+        )
+        if marked_count:
+            await channel.send(dead_link_role_notice(url, role_labels))
+        await save_dead_link_check_cursor(url)
+    except Exception as e:
+        print(f"Error with dead-link check: {e}")
+
+
 @bot.event
 async def on_ready():
     try:
@@ -235,12 +337,13 @@ async def on_ready():
             print("Could not get server info for:", server.name, str(e))
 
     if not IS_DEV:
-        # start_loop_once(update_content_loop)
+        start_loop_once(update_content_loop)
         start_loop_once(update_reddit_feeds_loop)
         start_loop_once(update_birthday_feeds_loop)
         start_loop_once(update_bias_leaderboard_snapshots_loop)
         start_loop_once(cleanup_accumulating_tables_loop)
         start_loop_once(recover_content_loop)
+        start_loop_once(dead_link_check_loop)
 
 
 @bot.tree.command(name="feed", description="Get random kpop content using idol or group name.")
@@ -249,7 +352,7 @@ async def feed(interaction: discord.Interaction, query: str | None = None):
     await interaction.response.defer(thinking=True)
     if not await asyncio.to_thread(has_completed_daily, interaction.user.id):
         await interaction.edit_original_response(
-            content=f"Complete today's `/bias daily` before using feed! {TSUKI_NOM}",
+            content=f"complete today's `/bias daily` first {HANNI_EMOJIS['eating / nom']}",
         )
         return
     min_age = await asyncio.to_thread(get_min_age, interaction.guild_id)
@@ -259,38 +362,25 @@ async def feed(interaction: discord.Interaction, query: str | None = None):
         role_ids = await asyncio.to_thread(get_closest_roles, query, min_age)
 
     if not role_ids:
-        text = f"Could not find a role for `{query if query else 'random'}`. This message will disappear in 30s."
+        text = content_not_found_message(query if query else "random")
         print(text)
         await interaction.edit_original_response(content=text)
         return
 
     role_ids_and_urls = await asyncio.to_thread(get_random_link_for_each_role, role_ids, min_age)
     if not role_ids_and_urls:
-        text = f"Could not find a content link for role id `{role_ids[0]}` given query `{query if query else 'random'}`. This message will disappear in 30s."
+        text = content_not_found_message(query if query else "random")
         print(text)
         await interaction.edit_original_response(content=text)
         return
 
-    # Send the message and get the sent message
-    await interaction.edit_original_response(content=role_ids_and_urls[0][1])
+    role_id, url = role_ids_and_urls[0]
+    if query not in [None, "r", "random"]:
+        await record_feed_activity(interaction.user.id, [role_id], FEED_ACTIVITY_POINTS)
+    view = await ContentFeedbackView.create(role_id, url)
+    await interaction.edit_original_response(content=url, view=view)
     sent_message = await interaction.original_response()
-
-    # React to the sent message with feedback emotes
-    emotes = [UPVOTE_EMOTE, REPORT_EMOTE]
-    for emote in emotes:
-        await sent_message.add_reaction(emote)
-
-    # Count emotes and update database
-    sent_message = await interaction.channel.fetch_message(sent_message.id)
-    task = asyncio.create_task(
-        gather_reactions(
-            message=sent_message,
-            url=role_ids_and_urls[0][1],
-            role_id=role_ids_and_urls[0][0],
-        )
-    )
-    _background_tasks.add(task)
-    task.add_done_callback(_background_tasks.discard)
+    schedule_sent_link_dead_check(sent_message, url)
 
     await asyncio.to_thread(add_stat_count, "feed")
 
@@ -314,7 +404,7 @@ async def latest(
     await interaction.response.defer(thinking=True)
     if not await asyncio.to_thread(has_completed_daily, interaction.user.id):
         await interaction.edit_original_response(
-            content=f"Complete today's `/bias daily` before using latest! {TSUKI_NOM}",
+            content=f"Complete today's `/bias daily` before using latest! {HANNI_EMOJIS['eating / nom']}",
         )
         return
 
@@ -342,7 +432,10 @@ async def latest(
         await interaction.edit_original_response(content="Could not find any content with these inputs.")
         return
 
-    text = f"Fetched latest `{len(role_ids_and_urls)}` images of `{query if query else 'all'}` after skipping first `{skip}` {TSUKI_NOM}"
+    text = (
+        f"Fetched latest `{len(role_ids_and_urls)}` images of `{query if query else 'all'}` "
+        f"after skipping first `{skip}` {HANNI_EMOJIS['eating / nom']}"
+    )
     try:
         await interaction.edit_original_response(content=text)
     except Exception as e:
@@ -414,15 +507,23 @@ async def get_links_error(interaction: discord.Interaction, error: discord.app_c
     if not interaction.response.is_done():
         await interaction.response.send_message("Could not create the link export.", ephemeral=True)
 
-
 @bot.tree.command(
     name="autofeed",
     description="Feast on kpop content automatically",
 )
 @discord.app_commands.describe(
     query="Idols and groups you want to include, 'r' or 'random' to be suprised",
+    sort_by="Order: random (default), latest, oldest, or highest-rated.",
     interval="Seconds between posts (default:20, min:2, max:24 hours)",
     count="Number of posts (default:5, max:120)",
+)
+@discord.app_commands.choices(
+    sort_by=[
+        discord.app_commands.Choice(name="Random", value="random"),
+        discord.app_commands.Choice(name="Latest", value="latest"),
+        discord.app_commands.Choice(name="Oldest", value="oldest"),
+        discord.app_commands.Choice(name="Highest rated", value="top"),
+    ]
 )
 @discord.app_commands.default_permissions(manage_guild=True)
 @discord.app_commands.guild_only()
@@ -431,6 +532,7 @@ async def autofeed(
     query: str | None = None,
     interval: int = 20,
     count: int = 5,
+    sort_by: str = "random",
 ):
     if interval < 2 or interval > 60 * 60 * 24:
         await interaction.response.send_message(
@@ -444,12 +546,12 @@ async def autofeed(
     await interaction.response.defer(thinking=True)
     if not await asyncio.to_thread(has_completed_daily, interaction.user.id):
         await interaction.edit_original_response(
-            content=f"Complete today's `/bias daily` before using autofeed! {TSUKI_NOM}",
+            content=f"complete today's `/bias daily` first {HANNI_EMOJIS['eating / nom']}",
         )
         return
     guild_id = interaction.guild_id
     command_name = "autofeed"
-    task = asyncio.create_task(autofeed_command(interaction, query, interval, count))
+    task = asyncio.create_task(autofeed_command(interaction, query, interval, count, sort_by))
     if guild_id not in bot.active_commands:
         bot.active_commands[guild_id] = {}
     if command_name not in bot.active_commands[guild_id]:
@@ -463,47 +565,71 @@ async def autofeed(
         await asyncio.to_thread(add_stat_count, "autofeed")
 
 
-async def autofeed_command(interaction: discord.Interaction, query: str | None, interval: int, count: int):
+async def autofeed_command(
+    interaction: discord.Interaction, query: str | None, interval: int, count: int, sort_by: str
+):
     if not interaction.response.is_done():
         await interaction.response.defer(thinking=True)
     min_age = await asyncio.to_thread(get_min_age, interaction.guild_id)
-    if query in [None, "r", "random"]:
-        role_ids = await asyncio.to_thread(get_random_roles, count, min_age)
-    else:
-        role_ids = await asyncio.to_thread(get_closest_roles, query, min_age, count)
+    if sort_by == "random":
+        if query in [None, "r", "random"]:
+            role_ids = await asyncio.to_thread(get_random_roles, count, min_age)
+        else:
+            role_ids = await asyncio.to_thread(get_closest_roles, query, min_age, count)
 
-    if not role_ids:
-        text = f"Could not find a role for `{query if query else 'random'}`. This message will disappear in 30s."
-        print(text)
-        message = await interaction.followup.send(content=text, wait=True)
-        await message.delete(delay=30)
-        return
+        if not role_ids:
+            text = content_not_found_message(query if query else "random")
+            print(text)
+            message = await interaction.followup.send(content=text, wait=True)
+            await message.delete(delay=30)
+            return
 
-    # Corrects role_ids to be the length of count if it was too short
-    if role_ids and len(role_ids) < count:
-        temp = len(role_ids)
-        temp = count // temp + 1
-        role_ids = (role_ids * temp)[:count]
+        # Correct role_ids to the requested length when a query has few matches.
+        if len(role_ids) < count:
+            role_ids = (role_ids * count)[:count]
 
-    role_ids_and_urls = await asyncio.to_thread(get_random_link_for_each_role, role_ids=role_ids, min_age=min_age)
-
-    # One retry attempt incase a role had a full recently sent queue
-    if not role_ids_and_urls or len(role_ids_and_urls) != count:
         role_ids_and_urls = await asyncio.to_thread(get_random_link_for_each_role, role_ids=role_ids, min_age=min_age)
+
+        # One retry in case a role had a full recently-sent queue.
+        if not role_ids_and_urls or len(role_ids_and_urls) != count:
+            role_ids_and_urls = await asyncio.to_thread(get_random_link_for_each_role, role_ids=role_ids, min_age=min_age)
+    else:
+        if query in [None, "r", "random", "a", "all"]:
+            role_ids = None
+        else:
+            role_ids = await asyncio.to_thread(get_closest_roles, query, min_age, count)
+            if not role_ids:
+                text = content_not_found_message(query)
+                print(text)
+                message = await interaction.followup.send(content=text, wait=True)
+                await message.delete(delay=30)
+                return
+        role_ids_and_urls = await asyncio.to_thread(
+            get_latest_links_for_roles,
+            num_links=count,
+            skip=0,
+            min_age=min_age,
+            role_ids=role_ids,
+            order=sort_by,
+        )
 
     # Proceed only if we got more than half of the count urls
     if not role_ids_and_urls or len(role_ids_and_urls) < count // 2:
-        text = "Could not find enough pieces of content"
+        text = content_unavailable_message()
         print(text)
         message = await interaction.followup.send(content=text, wait=True)
         await message.delete(delay=30)
         return
 
-    text = (
-        f"Starting feed of `{query if query else 'random'}`!\n"
-        + f"Found `{len(role_ids_and_urls)}` ingredient(s) serving every `{interval}` seconds.\n"
-        + f"We hope you enjoy your meal {TSUKI_NOM}"
-    )
+    if query not in [None, "r", "random", "a", "all"]:
+        await record_feed_activity(
+            interaction.user.id,
+            [role_id for role_id, _url in role_ids_and_urls],
+            AUTOFEED_ACTIVITY_POINTS,
+        )
+
+    query_label = query if query else ("random" if sort_by == "random" else "all")
+    text = feed_started_message(query_label, sort_by, len(role_ids_and_urls), interval)
     try:
         await interaction.followup.send(content=text)
     except Exception as e:
@@ -512,33 +638,28 @@ async def autofeed_command(interaction: discord.Interaction, query: str | None, 
 
     message = await interaction.original_response()
 
-    text = []
+    cancelled = False
     try:
         for role_id, url in role_ids_and_urls:
-            await asyncio.shield(perform_autofeed_critical_operations(message, url, role_id))
+            await asyncio.shield(perform_autofeed_critical_operations(message, role_id, url))
             if url != role_ids_and_urls[-1][1]:
                 await asyncio.sleep(interval)
 
     except asyncio.CancelledError:
-        text.append("An admin has cancelled this autofeed session.")
+        cancelled = True
     finally:
-        text.append(f"Thank you for choosing HanniBot {TSUKI_HARAM_HUG}")
-        await message.reply(" ".join(text))
+        await message.reply(feed_finished_message(cancelled))
 
 
-async def perform_autofeed_critical_operations(message: discord.Message, url: str, role_id: str):
-    message = await message.reply(content=url)
-
-    emotes = [UPVOTE_EMOTE, REPORT_EMOTE]
-    for emote in emotes:
-        await message.add_reaction(emote)
-
-    reaction_gathering_task = asyncio.create_task(gather_reactions(message, url, role_id))
-    _background_tasks.add(reaction_gathering_task)
-    reaction_gathering_task.add_done_callback(_background_tasks.discard)
+async def perform_autofeed_critical_operations(message: discord.Message, role_id: str, url: str):
+    view = await ContentFeedbackView.create(role_id, url)
+    sent_message = await message.reply(content=url, view=view)
+    schedule_sent_link_dead_check(sent_message, url)
 
 
-async def bias_autofeed_command(interaction: discord.Interaction, scope: str, interval: int, count: int):
+async def bias_autofeed_command(
+    interaction: discord.Interaction, scope: str, interval: int, count: int, sort_by: str
+):
     if not interaction.response.is_done():
         await interaction.response.defer(thinking=True)
     min_age = await asyncio.to_thread(get_min_age, interaction.guild_id)
@@ -551,7 +672,7 @@ async def bias_autofeed_command(interaction: discord.Interaction, scope: str, in
         tops = await asyncio.to_thread(get_personal_leaderboard, interaction.user.id, 15)
 
     if not tops.entries:
-        text = f"Could not find any {scope} bias rankings. Try voting with `/bias vote` first!"
+        text = f"i couldn't find any {scope} bias rankings yet, try `/bias vote` first {HANNI_EMOJIS['thinking']}"
         print(text)
         message = await interaction.followup.send(content=text, wait=True)
         await message.delete(delay=30)
@@ -563,28 +684,35 @@ async def bias_autofeed_command(interaction: discord.Interaction, scope: str, in
 
     top_roles = [entry.role_id for entry in tops.entries]
 
-    # Pick randomly with weights and replacement
-    role_ids = random.choices(top_roles, weights=weights, k=count)
-
-    role_ids_and_urls = await asyncio.to_thread(get_random_link_for_each_role, role_ids=role_ids, min_age=min_age)
-
-    # One retry attempt incase a role had a full recently sent queue
-    if not role_ids_and_urls or len(role_ids_and_urls) != count:
+    if sort_by == "random":
+        # Pick randomly with weights and replacement.
+        role_ids = random.choices(top_roles, weights=weights, k=count)
         role_ids_and_urls = await asyncio.to_thread(get_random_link_for_each_role, role_ids=role_ids, min_age=min_age)
+
+        # One retry in case a role had a full recently-sent queue.
+        if not role_ids_and_urls or len(role_ids_and_urls) != count:
+            role_ids_and_urls = await asyncio.to_thread(get_random_link_for_each_role, role_ids=role_ids, min_age=min_age)
+    else:
+        # For ordered feeds, all ranked idols are eligible and the requested
+        # content order determines which of their uploads comes first.
+        role_ids_and_urls = await asyncio.to_thread(
+            get_latest_links_for_roles,
+            num_links=count,
+            skip=0,
+            min_age=min_age,
+            role_ids=top_roles,
+            order=sort_by,
+        )
 
     # Proceed only if we got more than half of the count urls
     if not role_ids_and_urls or len(role_ids_and_urls) < count // 2:
-        text = "Could not find enough pieces of content"
+        text = content_unavailable_message()
         print(text)
         message = await interaction.followup.send(content=text, wait=True)
         await message.delete(delay=30)
         return
 
-    text = (
-        f"Starting {scope} bias feed!\n"
-        + f"Found `{len(role_ids_and_urls)}` ingredient(s) serving every `{interval}` seconds.\n"
-        + f"We hope you enjoy your meal {TSUKI_NOM}"
-    )
+    text = feed_started_message("bias", sort_by, len(role_ids_and_urls), interval, bias_scope=scope)
     try:
         await interaction.followup.send(content=text)
     except Exception as e:
@@ -593,18 +721,17 @@ async def bias_autofeed_command(interaction: discord.Interaction, scope: str, in
 
     message = await interaction.original_response()
 
-    text_parts = []
+    cancelled = False
     try:
         for role_id, url in role_ids_and_urls:
-            await asyncio.shield(perform_autofeed_critical_operations(message, url, role_id))
+            await asyncio.shield(perform_autofeed_critical_operations(message, role_id, url))
             if url != role_ids_and_urls[-1][1]:
                 await asyncio.sleep(interval)
 
     except asyncio.CancelledError:
-        text_parts.append("An admin has cancelled this autofeed session.")
+        cancelled = True
     finally:
-        text_parts.append(f"Thank you for choosing HanniBot {TSUKI_HARAM_HUG}")
-        await message.reply(" ".join(text_parts))
+        await message.reply(feed_finished_message(cancelled))
 
 
 @discord.app_commands.default_permissions(manage_messages=True)
@@ -734,6 +861,27 @@ class Admin(discord.app_commands.Group):
         return
 
     @discord.app_commands.command(
+        name="disambiguate",
+        description="Review an unresolved multi-role link, or a specified URL.",
+    )
+    @discord.app_commands.describe(url="Optional exact content URL to review")
+    async def disambiguate(self, interaction: discord.Interaction, url: str | None = None):
+        # The database can take longer than Discord's three-second interaction deadline.
+        await interaction.response.defer()
+        candidate = await asyncio.to_thread(get_disambiguation_candidate, url)
+        if candidate is None:
+            text = (
+                "No unresolved multi-role links are available." if url is None else "That URL has no reviewable roles."
+            )
+            await interaction.edit_original_response(content=text)
+            return
+
+        view = DisambiguationView(interaction.user.id, candidate)
+        message = await interaction.edit_original_response(content=candidate.url, view=view)
+        view.message = message
+        await asyncio.to_thread(add_stat_count, "admin_disambiguate")
+
+    @discord.app_commands.command(
         name="cancel_all_autofeeds",
         description="Terminate all running autofeed commands",
     )
@@ -786,7 +934,9 @@ class Admin(discord.app_commands.Group):
         await interaction.response.defer(ephemeral=True, thinking=True)
         try:
             await asyncio.to_thread(set_min_age, interaction.guild_id, min_age)
-            await interaction.edit_original_response(content=f"Min age has been successfully set to `{min_age}`.")
+            await interaction.edit_original_response(
+                content=f"min age is now `{min_age}` {HANNI_EMOJIS['bowing / thank you']}"
+            )
         except Exception as e:
             print(f"Guild setting failed for guild {interaction.guild_id}: {e}")
             await interaction.edit_original_response(
@@ -813,7 +963,8 @@ class BiasRater(discord.app_commands.Group):
             view.interaction = interaction
             await interaction.edit_original_response(embeds=view.embeds, view=view)
         except Exception as e:
-            await interaction.edit_original_response(content=f"Could not start voting: {str(e)}")
+            print(f"Could not start bias voting: {e}")
+            await interaction.edit_original_response(content=transient_error_message())
         await asyncio.to_thread(add_stat_count, "bias_vote")
 
     @discord.app_commands.command(
@@ -836,7 +987,8 @@ class BiasRater(discord.app_commands.Group):
             view.interaction = interaction
             await interaction.edit_original_response(embeds=view.embeds, view=view)
         except Exception as e:
-            await interaction.edit_original_response(content=f"Could not start daily: {str(e)}")
+            print(f"Could not start daily bias bracket: {e}")
+            await interaction.edit_original_response(content=transient_error_message())
         await asyncio.to_thread(add_stat_count, "bias_daily")
 
     @discord.app_commands.command(name="leaderboard", description="Show ELO leaderboard")
@@ -871,7 +1023,9 @@ class BiasRater(discord.app_commands.Group):
             title = f"Personal Leaderboard for {target_user.display_name}"
 
         if not tops.entries:
-            await interaction.edit_original_response(content="No votes recorded yet!")
+            await interaction.edit_original_response(
+                content=f"no votes recorded yet {HANNI_EMOJIS['sad']}"
+            )
             return
 
         view = LeaderboardView(title, tops) if len(tops.entries) > LEADERBOARD_PAGE_SIZE else None
@@ -904,7 +1058,9 @@ class BiasRater(discord.app_commands.Group):
             title = f"Personal Group Leaderboard for {interaction.user.display_name}"
 
         if not tops.entries:
-            await interaction.edit_original_response(content="No votes recorded yet!")
+            await interaction.edit_original_response(
+                content=f"no votes recorded yet {HANNI_EMOJIS['sad']}"
+            )
             return
 
         embeds = build_group_leaderboard_embeds(title, tops)
@@ -917,6 +1073,7 @@ class BiasRater(discord.app_commands.Group):
     )
     @discord.app_commands.describe(
         scope="Rankings to base feed off of: personal, server, or global (default: personal)",
+        sort_by="Order: random (default), latest, oldest, or highest-rated.",
         interval="Seconds between posts (default:20, min:2, max:24 hours)",
         count="Number of posts (default:5, max:120)",
     )
@@ -925,7 +1082,13 @@ class BiasRater(discord.app_commands.Group):
             discord.app_commands.Choice(name="Personal", value="personal"),
             discord.app_commands.Choice(name="Server", value="server"),
             discord.app_commands.Choice(name="Global", value="global"),
-        ]
+        ],
+        sort_by=[
+            discord.app_commands.Choice(name="Random", value="random"),
+            discord.app_commands.Choice(name="Latest", value="latest"),
+            discord.app_commands.Choice(name="Oldest", value="oldest"),
+            discord.app_commands.Choice(name="Highest rated", value="top"),
+        ],
     )
     async def autofeed(
         self,
@@ -933,6 +1096,7 @@ class BiasRater(discord.app_commands.Group):
         scope: str = "personal",
         interval: int = 20,
         count: int = 5,
+        sort_by: str = "random",
     ):
         if interval < 2 or interval > 60 * 60 * 24:
             await interaction.response.send_message(
@@ -947,13 +1111,13 @@ class BiasRater(discord.app_commands.Group):
         await interaction.response.defer(thinking=True)
         if not await asyncio.to_thread(has_completed_daily, interaction.user.id):
             await interaction.edit_original_response(
-                content=f"Complete today's `/bias daily` before using autofeed! {TSUKI_NOM}"
+                content=f"complete today's `/bias daily` first {HANNI_EMOJIS['eating / nom']}"
             )
             return
 
         guild_id = interaction.guild_id
         command_name = "autofeed"  # using autofeed command name so /admin cancel works on this too
-        task = asyncio.create_task(bias_autofeed_command(interaction, scope, interval, count))
+        task = asyncio.create_task(bias_autofeed_command(interaction, scope, interval, count, sort_by))
         if guild_id not in bot.active_commands:
             bot.active_commands[guild_id] = {}
         if command_name not in bot.active_commands[guild_id]:
@@ -1078,15 +1242,17 @@ async def handle_tsuki_chat(message: discord.Message) -> None:
                 result.text or HANNI_EMOJIS["despair"],
                 allowed_mentions=discord.AllowedMentions(users=True, roles=False, everyone=False),
             )
-            for url in result.attachments:
-                await channel.send(url)
+            for attachment in result.attachments:
+                view = await ContentFeedbackView.create(attachment.role_id, attachment.url)
+                sent_message = await channel.send(attachment.url, view=view)
+                schedule_sent_link_dead_check(sent_message, attachment.url)
         except Exception as e:
             raise RuntimeError(f"LLM completed but discord send failed: {e}")
 
         await asyncio.to_thread(add_stat_count, "llm_response")
     except Exception as e:
         print(f"LLM chat error: {e}")
-        await channel.send(f"something happened inside me {HANNI_EMOJIS['despair']}\n{e}")
+        await channel.send(transient_error_message())
 
 
 @bot.event

@@ -56,6 +56,8 @@ DEFAULT_GUILD_ID = "124767749099618304"
 DEFAULT_CHANNEL_ID = "124767749099618304"
 RECOVERY_TEST_CHANNEL_ID = "1536908360673271918"
 RECOVERY_VERIFICATION_POLL_INTERVAL_SECONDS = 2
+# Give Discord a brief chance to return an explicit bad embed. A missing embed
+# is treated optimistically as live because Discord may take much longer.
 RECOVERY_VERIFICATION_POLL_ATTEMPTS = 6
 RECOVERY_VERIFICATION_WORKERS = 4
 DISCORD_API_BASE = "https://discord.com/api/v10"
@@ -1416,7 +1418,7 @@ def mark_recovery_exhausted(connection: psycopg.Connection[Any], candidate: Cand
 
 
 def verify_uploaded_link(discord_client: DiscordClient, channel_id: str, uploaded_url: str) -> bool:
-    """Return whether Discord can unfurl an uploaded URL in the recovery test channel."""
+    """Return false only when Discord has produced an explicitly broken embed."""
 
     posted_message = discord_client.create_message(channel_id, uploaded_url)
     message_id = posted_message["id"]
@@ -1426,7 +1428,10 @@ def verify_uploaded_link(discord_client: DiscordClient, channel_id: str, uploade
             return not is_message_broken_link(verified_message)
         if attempt < RECOVERY_VERIFICATION_POLL_ATTEMPTS - 1:
             time.sleep(RECOVERY_VERIFICATION_POLL_INTERVAL_SECONDS)
-    return False
+    # Discord may take minutes or longer to create an embed. The direct upload
+    # already succeeded, so retain the replacement until an explicit bad embed
+    # proves otherwise.
+    return True
 
 
 def verify_uploaded_link_in_worker(authorization: str, channel_id: str, uploaded_url: str) -> bool:
@@ -1641,6 +1646,55 @@ def record_dead_replacement(
                 )
 
 
+def recovery_role_labels(connection: psycopg.Connection[Any], url: str) -> tuple[str, ...]:
+    """Return every role still using a recovery source URL."""
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT DISTINCT
+                CASE
+                    WHEN ri.member_name IS NOT NULL AND ri.group_name IS NOT NULL
+                        THEN ri.member_name || ' (' || ri.group_name || ')'
+                    ELSE COALESCE(ri.member_name, ri.group_name, cl.role_id)
+                END AS role_label
+            FROM content_links AS cl
+            LEFT JOIN role_info AS ri ON ri.role_id = cl.role_id
+            WHERE cl.url = %s
+            ORDER BY role_label;
+            """,
+            (url,),
+        )
+        return tuple(str(row[0]) for row in cursor.fetchall())
+
+
+def dead_link_role_notice(url: str, role_labels: tuple[str, ...]) -> str:
+    """Format the same warning used by the background dead-link checker."""
+
+    roles = ", ".join(role_labels) or "Unknown role"
+    return f"⚠️ Dead link detected: <{url}>\nAffected roles: {roles}"[:2000]
+
+
+def send_recovery_dead_link_notice(
+    connection: psycopg.Connection[Any],
+    notification_client: DiscordClient,
+    channel_id: str,
+    replacement_url: str,
+    source_url: str,
+) -> None:
+    """Notify the recovery verification channel after an explicitly bad embed."""
+
+    try:
+        notification_client.create_message(
+            channel_id,
+            dead_link_role_notice(replacement_url, recovery_role_labels(connection, source_url)),
+        )
+    except Exception as error:
+        # The recovery result is already committed; a notification failure must
+        # not rewrite it as a failed recovery.
+        print(f"Failed to send dead-link notice for recovered URL {replacement_url}: {error}")
+
+
 def sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as input_file:
@@ -1771,7 +1825,11 @@ def process_candidate(
 
 
 def finalize_pending_verification(
-    connection: psycopg.Connection[Any], future: Future[bool], pending: PendingVerification
+    connection: psycopg.Connection[Any],
+    future: Future[bool],
+    pending: PendingVerification,
+    notification_client: DiscordClient | None = None,
+    notification_channel_id: str | None = None,
 ) -> None:
     """Apply a completed unfurl result on the batch thread, where the DB connection lives."""
 
@@ -1823,6 +1881,14 @@ def finalize_pending_verification(
             pending.uploaded.media_id,
             pending.replacement_generation,
         )
+        if notification_client is not None and notification_channel_id is not None:
+            send_recovery_dead_link_notice(
+                connection,
+                notification_client,
+                notification_channel_id,
+                pending.uploaded.url,
+                pending.candidate.url,
+            )
         print(f"DEAD {pending.candidate.content_link_id}: Discord could not unfurl {pending.uploaded.url}")
     except Exception as error:
         update_recovery_item(
@@ -1845,13 +1911,17 @@ def finalize_pending_verification(
 def finalize_completed_verifications(
     connection: psycopg.Connection[Any],
     pending_verifications: list[tuple[Future[bool], PendingVerification]],
+    notification_client: DiscordClient | None = None,
+    notification_channel_id: str | None = None,
 ) -> list[tuple[Future[bool], PendingVerification]]:
     """Commit completed verifier results without waiting for the rest of the batch."""
 
     still_pending: list[tuple[Future[bool], PendingVerification]] = []
     for future, pending in pending_verifications:
         if future.done():
-            finalize_pending_verification(connection, future, pending)
+            finalize_pending_verification(
+                connection, future, pending, notification_client, notification_channel_id
+            )
         else:
             still_pending.append((future, pending))
     return still_pending
@@ -1893,6 +1963,7 @@ def run_recovery_batch(config: RecoveryBatchConfig, *, print_candidates_output: 
             f"Verifying uploads in test channel {config.verification_channel_id} " f"using {verification_auth_source}"
         )
         media_client = DiscordClient()
+        notification_client = DiscordClient(verification_authorization)
         try:
             imgur_client = ImgurClient(
                 client_id,
@@ -1901,6 +1972,7 @@ def run_recovery_batch(config: RecoveryBatchConfig, *, print_candidates_output: 
             )
         except Exception:
             media_client.close()
+            notification_client.close()
             raise
         batch_id = uuid.uuid4().hex
         stopped = False
@@ -1940,10 +2012,21 @@ def run_recovery_batch(config: RecoveryBatchConfig, *, print_candidates_output: 
                         print(f"Stopping the batch because an Imgur upload outcome was ambiguous: {error}")
                         break
 
-                    pending_verifications = finalize_completed_verifications(connection, pending_verifications)
+                    pending_verifications = finalize_completed_verifications(
+                        connection,
+                        pending_verifications,
+                        notification_client,
+                        config.verification_channel_id,
+                    )
 
                 for future, pending in pending_verifications:
-                    finalize_pending_verification(connection, future, pending)
+                    finalize_pending_verification(
+                        connection,
+                        future,
+                        pending,
+                        notification_client,
+                        config.verification_channel_id,
+                    )
         finally:
             try:
                 summary = summarize_recovery_batch(connection, batch_id, len(candidates), stopped, stop_reason)
@@ -1960,6 +2043,7 @@ def run_recovery_batch(config: RecoveryBatchConfig, *, print_candidates_output: 
             finally:
                 media_client.close()
                 imgur_client.close()
+                notification_client.close()
         return summary
 
 

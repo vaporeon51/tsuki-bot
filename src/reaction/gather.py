@@ -2,37 +2,26 @@ import asyncio
 
 import discord
 
-from src.config.constants import REACT_WAIT_SEC
-from src.db.utils import mark_url_dead, update_given_emote_counts
+from src.db.utils import mark_url_dead
 from src.utils import is_message_broken_link
 
 
-async def gather_dead_link(message: discord.Message, url: str) -> None:
+async def gather_dead_link(
+    message: discord.Message,
+    url: str,
+    *,
+    wait_seconds: float = 30,
+) -> int:
     """
-    Gather only deadlink no reactions.
+    Gather only deadlink no reactions and return the number of rows marked.
     """
 
-    await asyncio.sleep(30)
+    await asyncio.sleep(wait_seconds)
+    checked_message = await message.channel.fetch_message(message.id)
 
-    message = await message.channel.fetch_message(message.id)
-
-    if is_message_broken_link(message):
+    if is_message_broken_link(checked_message):
         marked_count = await asyncio.to_thread(mark_url_dead, url)
         print(f"URL {url} is broken; marked {marked_count} content link(s) dead.")
+        return marked_count
 
-
-async def gather_reactions(message: discord.Message, url: str, role_id: str) -> None:
-    """
-    Gathers the reaction of message
-    """
-    await asyncio.sleep(REACT_WAIT_SEC)
-
-    message = await message.channel.fetch_message(message.id)
-
-    if is_message_broken_link(message):
-        marked_count = await asyncio.to_thread(mark_url_dead, url)
-        print(f"URL {url} is broken; marked {marked_count} content link(s) dead.")
-        return
-
-    count_by_emote = {emote.emoji: emote.count for emote in message.reactions}
-    await asyncio.to_thread(update_given_emote_counts, role_id, url, count_by_emote)
+    return 0

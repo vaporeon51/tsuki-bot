@@ -20,6 +20,15 @@ INSERT_CONTENT_LINK = """
 """
 
 
+def get_known_role_ids() -> frozenset[str]:
+    """Return IDs that are valid content-link roles."""
+
+    with POOL.connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT role_id FROM role_info;")
+            return frozenset(str(row[0]) for row in cursor.fetchall())
+
+
 def get_latest_message_id() -> str:
     with POOL.connection() as connection:
         with connection.cursor() as cursor:

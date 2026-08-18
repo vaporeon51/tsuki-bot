@@ -79,6 +79,22 @@ class ContentRecoveryTests(unittest.TestCase):
 
         sleep.assert_called_once_with(content_recovery.RECOVERY_VERIFICATION_POLL_INTERVAL_SECONDS)
 
+    @patch("src.content_recovery.RECOVERY_VERIFICATION_POLL_ATTEMPTS", 2)
+    @patch("src.content_recovery.time.sleep")
+    def test_verify_uploaded_link_accepts_an_embed_that_is_still_pending(self, sleep: Mock) -> None:
+        discord_client = Mock()
+        discord_client.create_message.return_value = {"id": "123"}
+        discord_client.get_message.return_value = {"embeds": []}
+
+        self.assertTrue(
+            content_recovery.verify_uploaded_link(
+                discord_client, content_recovery.RECOVERY_TEST_CHANNEL_ID, "https://i.imgur.com/recovered.mp4"
+            )
+        )
+
+        self.assertEqual(discord_client.get_message.call_count, 2)
+        sleep.assert_called_once_with(content_recovery.RECOVERY_VERIFICATION_POLL_INTERVAL_SECONDS)
+
     def test_record_dead_replacement_keeps_the_content_link_dead(self) -> None:
         connection = MagicMock()
         cursor = connection.cursor.return_value.__enter__.return_value
@@ -126,6 +142,12 @@ class ContentRecoveryTests(unittest.TestCase):
         self.assertIn("WHERE url = %s", content_link_update)
         self.assertIn("AND is_dead = TRUE", content_link_update)
         self.assertNotIn("content_link_id", content_link_update.split("WHERE", 1)[1])
+
+    def test_dead_link_role_notice_matches_the_background_checker_format(self) -> None:
+        self.assertEqual(
+            content_recovery.dead_link_role_notice("https://i.imgur.com/dead.mp4", ("Tsuki (Billlie)",)),
+            "⚠️ Dead link detected: <https://i.imgur.com/dead.mp4>\nAffected roles: Tsuki (Billlie)",
+        )
 
     def test_fetch_candidates_deduplicates_shared_urls(self) -> None:
         connection = MagicMock()

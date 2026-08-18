@@ -27,6 +27,7 @@ def message(
 class ContentUpdateTests(unittest.IsolatedAsyncioTestCase):
     @patch("src.content_update.content_update_db.persist_content_update")
     @patch("src.content_update.content_update_db.reconcile_content_links", return_value=0)
+    @patch("src.content_update.content_update_db.get_known_role_ids", return_value=frozenset())
     @patch("src.content_update.content_discord.get_messages_around")
     @patch("src.content_update.content_discord.get_messages_after")
     @patch("src.content_update.content_update_db.get_latest_message_id", return_value="100")
@@ -35,6 +36,7 @@ class ContentUpdateTests(unittest.IsolatedAsyncioTestCase):
         get_latest_message_id: Mock,
         get_messages_after: Mock,
         get_messages_around: Mock,
+        get_known_role_ids: Mock,
         reconcile_content_links: Mock,
         persist_content_update: Mock,
     ) -> None:
@@ -56,6 +58,7 @@ class ContentUpdateTests(unittest.IsolatedAsyncioTestCase):
         await content_update.run_content_links_update()
 
         get_latest_message_id.assert_called_once()
+        get_known_role_ids.assert_called_once()
         get_messages_after.assert_called_once_with("100")
         get_messages_around.assert_called_once_with("100")
         reconcile_content_links.assert_called_once()
@@ -66,6 +69,7 @@ class ContentUpdateTests(unittest.IsolatedAsyncioTestCase):
     @patch("src.content_update.asyncio.sleep", new_callable=AsyncMock)
     @patch("src.content_update.content_update_db.persist_content_update", side_effect=[1, 1])
     @patch("src.content_update.content_update_db.reconcile_content_links")
+    @patch("src.content_update.content_update_db.get_known_role_ids", return_value=frozenset())
     @patch("src.content_update.content_discord.get_messages_around", return_value=[])
     @patch("src.content_update.content_discord.get_messages_after")
     @patch("src.content_update.content_update_db.get_latest_message_id", return_value="100")
@@ -74,6 +78,7 @@ class ContentUpdateTests(unittest.IsolatedAsyncioTestCase):
         get_latest_message_id: Mock,
         get_messages_after: Mock,
         get_messages_around: Mock,
+        get_known_role_ids: Mock,
         reconcile_content_links: Mock,
         persist_content_update: Mock,
         sleep: AsyncMock,

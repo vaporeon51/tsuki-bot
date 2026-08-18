@@ -1,14 +1,20 @@
 import asyncio
 import re
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
 
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 from langchain_core.runnables import Runnable
 from langchain_core.tools import tool
 from langchain_google_genai import ChatGoogleGenerativeAI
 
-from src.db.utils import get_closest_roles, get_random_link_for_each_role, get_random_roles
+from src.db.utils import (
+    get_closest_roles,
+    get_latest_links_for_roles,
+    get_random_link_for_each_role,
+    get_random_roles,
+)
+from src.hanni_ui import HANNI_EMOJIS
 
 # Models tried in order; we advance to the next one only on a rate limit.
 # (All must support native function calling.)
@@ -18,42 +24,6 @@ MODELS = [
     "gemma-4-31b-it",  # fallback
 ]
 MAX_TOKENS = 2048
-
-# Custom server emojis Hanni can use, keyed by a short description. Discord renders
-# these literal strings inline (`<a:name:id>` for animated, `<:name:id>` for static),
-# so we hand them to the model verbatim and it copies them into its reply.
-HANNI_EMOJIS: dict[str, str] = {
-    "sad": "<a:hanni_sad:1514631028973633546>",
-    "ooooh / teasing": "<a:hanni_ouuu:1514631027601965217>",
-    "hug": "<a:hanni_minji_hug:1514631025978900602>",
-    "blowing a kiss": "<a:hanni_kissme:1514631023910981683>",
-    "thinking": "<:hanni_think:1514630252104515585>",
-    "omg / shocked": "<:hanni_omg:1514630248325447770>",
-    "oh no / embarrassed": "<:hanni_notlikethis:1514630247486591016>",
-    "mad": "<:hanni_mad:1514630245032919110>",
-    "kiss": "<a:hanni_kiss:1514630242013155458>",
-    "laughing": "<a:hanni_kek:1514630240062935171>",
-    "giggling": "<a:hanni_giggle:1514630238124900464>",
-    "cozy / comfy": "<:hanni_cozyblanket:1514630236522938408>",
-    "awkward smile": "<a:hanni_awkwardsmile:1514630233716690974>",
-    "wink": "<:cat_wink:1514630232232034344>",
-    "screaming / excited": "<a:cat_screaming:1514630231129067560>",
-    "pat / there there": "<a:bear_pat:1514630230445396019>",
-    "scream / very excited": "<a:haerin_scream:1515062708071038997>",
-    "bowing / thank you": "<a:hanni_bow:1515062709685584062>",
-    "cursed / derp": "<a:hanni_cursed:1515062711309045871>",
-    "excited / jumping": "<a:hanni_excited:1515062712919396402>",
-    "hello / wave": "<a:hanni_hello:1515062715415134389>",
-    "eating / nom": "<a:hanni_nom:1515062716702916658>",
-    "punch / boop": "<a:hanni_punch:1515062717809954898>",
-    "swag / cool": "<a:hanni_swag:1515062719378620496>",
-    "despair": "<:hanni_despair:1515066515408425031>",
-    "no no / finger wag": "<a:hanni_no:1515066516775633066>",
-    "pull hearts / flirt": "<a:hanni_pull_hearts:1515066517933527041>",
-    "shake my head / no": "<a:hanni_smh:1515066520089268414>",
-    "typing / chatting": "<a:hanni_typing:1515066521129320601>",
-    "yikes / cringe": "<a:hanni_yikes:1515066523172077730>",
-}
 
 _EMOJI_GUIDE = "\n".join(f"- {meaning}: {code}" for meaning, code in HANNI_EMOJIS.items())
 
@@ -135,22 +105,49 @@ Available emojis — copy the full code on the right, exactly:
 {_EMOJI_GUIDE}
 
 # Sharing kpop content
-When it's natural to share a picture or gif of an idol or group, call the `get_content` tool.
-ALWAYS write your normal chatty reply in the SAME message as the tool call — never send just a
-tool call with no words. Share at most one piece of content per reply, and don't paste a link or
-describe the file yourself; the picture is attached automatically.
+When it's natural to share a picture or gif of an idol or group, call the `share_content` tool.
+It can immediately share at most 3 pieces of content — it does NOT start a timed autofeed. Use
+`mode="random"` for a surprise/random pick, `mode="latest"` for the newest uploads,
+`mode="oldest"` for the earliest uploads, or `mode="top"` for the highest-rated uploads. For
+latest, oldest, or top, `offset=0` means the first result, `offset=1` means skip it, and so on.
+Use `query="all"` with latest, oldest, or top to search across everyone. If someone asks for more
+than 3, tell them you can send only 3 at once and call the tool with `count=3`.
+
+Write your normal chatty reply in the same message as the tool call when you can, but the app may
+add a short reply itself when the model returns a tool call with no text. Don't paste a link or
+describe the file yourself; the pictures are attached automatically.
+
+# Bare idol and group names are content requests
+When the person pinging you sends only an idol name, a group name, or a group + idol name (for
+example "minji", "newjeans", or "kiikii haum"), treat it as an implicit request to share content.
+Call `share_content` with their exact name as `query`, using `mode="random"` and `count=1` unless
+they ask for a different mode or amount. Do this even when you personally don't recognize the
+name—never tell them you don't know who it is before trying the tool. The content search handles
+matching and will tell you if nothing is available.
 """
 
 
 @tool
-def get_content(query: str) -> str:
-    """Fetch a kpop picture or gif to share with the channel.
+def share_content(
+    query: str = "random",
+    mode: Literal["random", "latest", "oldest", "top"] = "random",
+    count: int = 1,
+    offset: int = 0,
+) -> str:
+    """Share up to three kpop pictures or gifs with the channel.
 
     Args:
         query: An idol's name (e.g. "minji"), a group name (e.g. "newjeans"),
             or a combination of both if name is ambiguous (e.g. "ive yujin"),
-            or "random" for a random pick. For groups use full names
-            (e.g. hearts2hearts instead of h2h, newjeans instead of njz)
+            or "random" for a random pick. For latest content across everyone,
+            use "all". For groups use full names (e.g. hearts2hearts instead of
+            h2h, newjeans instead of njz).
+        mode: "random" for random content, "latest" for newest uploads,
+            "oldest" for earliest uploads, or "top" for highest-rated uploads.
+        count: Number of attachments to share, from 1 to 3. Never request more
+            than 3; tell the user about that limit if they ask for more.
+        offset: For mode="latest", mode="oldest", or mode="top", the number
+            of results to skip. Zero means the first matching result.
     """
     # Dispatched manually in generate_chat_response so we can inject the
     # per-guild min_age and run the blocking DB calls off the event loop.
@@ -168,7 +165,7 @@ def _build_llm(model: str) -> Runnable:
     if model.startswith("gemini-3.1"):
         kwargs["thinking_level"] = "low"
     llm = ChatGoogleGenerativeAI(**kwargs)
-    return llm.bind_tools([get_content])  # type: ignore[list-item]
+    return llm.bind_tools([share_content])  # type: ignore[list-item]
 
 
 # Each model's tool-bound client, built once and reused across all responses.
@@ -237,7 +234,25 @@ class ChatMsg:
 @dataclass
 class ChatResult:
     text: str
-    attachments: list[str] = field(default_factory=list)
+    attachments: list["ContentAttachment"] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class ContentAttachment:
+    role_id: str
+    url: str
+
+
+@dataclass(frozen=True)
+class ContentRequest:
+    query: str
+    mode: Literal["random", "latest", "oldest", "top"]
+    count: int
+    offset: int
+    requested_count: int
+
+
+MAX_CONTENT_ATTACHMENTS = 3
 
 
 # Other users' custom emojis: collapse `<:name:id>` / `<a:name:id>` to `:name:`
@@ -324,60 +339,164 @@ def _build_messages(history: list[ChatMsg]) -> list[BaseMessage]:
     return messages
 
 
-async def _resolve_content(query: str, min_age: str) -> str | None:
-    q = query.strip().lower()
-    if q in ("", "random", "r"):
-        role_ids = await asyncio.to_thread(get_random_roles, 1, min_age)
+def _content_request_from_args(args: dict[str, Any], remaining: int = MAX_CONTENT_ATTACHMENTS) -> ContentRequest:
+    """Normalize untrusted tool arguments and enforce the attachment cap."""
+
+    query = str(args.get("query", "random")).strip() or "random"
+    raw_mode = str(args.get("mode", "random")).strip().lower()
+    mode: Literal["random", "latest", "oldest", "top"] = (
+        raw_mode if raw_mode in {"random", "latest", "oldest", "top"} else "random"
+    )
+    try:
+        requested_count = int(args.get("count", 1))
+    except (TypeError, ValueError):
+        requested_count = 1
+    requested_count = max(1, requested_count)
+    try:
+        offset = int(args.get("offset", 0))
+    except (TypeError, ValueError):
+        offset = 0
+
+    return ContentRequest(
+        query=query,
+        mode=mode,
+        count=min(requested_count, MAX_CONTENT_ATTACHMENTS, max(0, remaining)),
+        offset=max(0, offset),
+        requested_count=requested_count,
+    )
+
+
+async def _resolve_content(request: ContentRequest, min_age: str) -> list[ContentAttachment]:
+    """Resolve a bounded sharing request without making another model call."""
+
+    if request.count == 0:
+        return []
+
+    query = request.query.strip()
+    normalized_query = query.lower()
+    if request.mode in {"latest", "oldest", "top"}:
+        if normalized_query in ("", "random", "r", "all", "a"):
+            pairs = await asyncio.to_thread(
+                get_latest_links_for_roles,
+                num_links=request.count,
+                skip=request.offset,
+                min_age=min_age,
+                order=request.mode,
+            )
+        else:
+            role_ids = await asyncio.to_thread(get_closest_roles, query, min_age, request.count)
+            if not role_ids:
+                return []
+            pairs = await asyncio.to_thread(
+                get_latest_links_for_roles,
+                num_links=request.count,
+                skip=request.offset,
+                min_age=min_age,
+                role_ids=role_ids,
+                order=request.mode,
+            )
     else:
-        role_ids = await asyncio.to_thread(get_closest_roles, query, min_age)
-    if not role_ids:
-        return None
-    pairs = await asyncio.to_thread(get_random_link_for_each_role, role_ids, min_age)
+        if normalized_query in ("", "random", "r"):
+            role_ids = await asyncio.to_thread(get_random_roles, request.count, min_age)
+        else:
+            role_ids = await asyncio.to_thread(get_closest_roles, query, min_age, request.count)
+            # A single idol match is still allowed to supply several random links.
+            if role_ids and len(role_ids) < request.count:
+                role_ids = (role_ids * request.count)[: request.count]
+        if not role_ids:
+            return []
+        pairs = await asyncio.to_thread(get_random_link_for_each_role, role_ids, min_age)
+
     if not pairs:
-        return None
-    return pairs[0][1]
+        return []
+    return [ContentAttachment(role_id=role_id, url=url) for role_id, url in pairs[: request.count]]
+
+
+def _content_fallback_text(requests: list[ContentRequest], attachment_count: int) -> str:
+    """Short in-character copy for Gemini's function-call-only responses."""
+
+    request = requests[0]
+    limit_note = (
+        " i can only send 3 at once so here's 3 !!"
+        if request.requested_count > MAX_CONTENT_ATTACHMENTS
+        else ""
+    )
+    if limit_note:
+        return limit_note.strip()
+    if request.mode == "latest":
+        if request.offset:
+            return f"gotchu, went back {request.offset} and grabbed these for you !!"
+        return (
+            "gotchu, these are the latest ones !!"
+            if attachment_count > 1
+            else "gotchu, here's the latest one !!"
+        )
+    if request.mode == "oldest":
+        if request.offset:
+            return f"gotchu, went forward {request.offset} from the oldest ones for you !!"
+        return (
+            "omg these are the oldies !!"
+            if attachment_count > 1
+            else "omg here's an oldie for you !!"
+        )
+    if request.mode == "top":
+        if request.offset:
+            return f"gotchu, went down to the #{request.offset + 1} top pick for you !!"
+        return (
+            "okayyy, these are the highest-rated ones !!"
+            if attachment_count > 1
+            else "okayyy, here's a top-rated one !!"
+        )
+    if request.query.lower() in ("", "random", "r"):
+        return "surpriseee, enjoy !!" if attachment_count == 1 else "surpriseee, a little random set for you !!"
+    return (
+        f"gotchu, here's {request.query} !!"
+        if attachment_count == 1
+        else f"gotchu, some {request.query} for you !!"
+    )
 
 
 async def generate_chat_response(history: list[ChatMsg], min_age: str) -> ChatResult:
     """Generate Hanni's in-character reply for the given conversation history.
 
-    One model call by default: the model returns its text reply and (optionally)
-    a `get_content` tool call together, so we attach the picture without a second
-    round-trip. Only if a content search comes back empty do we make a follow-up
-    call, feeding the result back so she can respond gracefully.
+    Exactly one model call: a tool call is resolved locally, and function-call-only
+    Gemini responses receive a compact canned reply instead of a second API call.
     """
     messages = _build_messages(history)
 
     ai = await _ainvoke(messages)
 
-    content_calls = [c for c in ai.tool_calls if c["name"] == "get_content"]
+    content_calls = [c for c in ai.tool_calls if c["name"] == "share_content"]
     if not content_calls:
         return ChatResult(text=_restore_emoji_codes(_message_text(ai).strip()))
 
     try:
-        # Resolve each content request against the DB.
-        messages.append(ai)
-        attachments: list[str] = []
-        any_failed = False
+        # Resolve each request locally. A model can emit multiple calls, but all
+        # calls together may attach no more than MAX_CONTENT_ATTACHMENTS items.
+        attachments: list[ContentAttachment] = []
+        resolved_requests: list[ContentRequest] = []
         for call in content_calls:
-            url = await _resolve_content(call["args"].get("query", "random"), min_age)
-            if url:
-                if url not in attachments:
-                    attachments.append(url)
-                tool_content = "Shared the picture with the channel."
-            else:
-                any_failed = True
-                tool_content = "Couldn't find any matching content — tell them you came up empty."
-            messages.append(ToolMessage(content=tool_content, tool_call_id=call["id"]))
+            call_args = call.get("args", {})
+            if not isinstance(call_args, dict):
+                call_args = {}
+            request = _content_request_from_args(call_args, MAX_CONTENT_ATTACHMENTS - len(attachments))
+            if request.count == 0:
+                break
+            resolved_requests.append(request)
+            for attachment in await _resolve_content(request, min_age):
+                if attachment.url not in {item.url for item in attachments}:
+                    attachments.append(attachment)
+                if len(attachments) == MAX_CONTENT_ATTACHMENTS:
+                    break
     except Exception as e:
         raise RuntimeError(f"LLM succeeded but content resolution failed: {e}")
 
-    # Happy path: the search found something and her reply is already in call 1,
-    # so we're done in a single call. Only re-invoke when a search failed.
-    if not any_failed:
-        text = _restore_emoji_codes(_message_text(ai).strip()) or f"here you go !! {HANNI_EMOJIS['giggling']}"
-        return ChatResult(text=text, attachments=attachments)
+    model_text = _restore_emoji_codes(_message_text(ai).strip())
+    if model_text:
+        return ChatResult(text=model_text, attachments=attachments)
 
-    follow_up = await _ainvoke(messages)
-    text = _restore_emoji_codes(_message_text(follow_up).strip()) or _restore_emoji_codes(_message_text(ai).strip())
+    if attachments:
+        text = _content_fallback_text(resolved_requests, len(attachments))
+    else:
+        text = "ahh i couldn't find any matching ones rn <a:hanni_sad:1514631028973633546>"
     return ChatResult(text=text, attachments=attachments)

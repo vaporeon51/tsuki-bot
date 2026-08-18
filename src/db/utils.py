@@ -3,16 +3,15 @@ import io
 from collections import defaultdict, deque
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
 from src.config.constants import (
     CONTENT_RECOVERY_MAX_GENERATION,
     GET_LINKS_EXPORT_CHUNK_BYTES,
     INITIAL_REACT_CAP,
     RECENTLY_SENT_QUEUE_SIZE,
-    REPORT_EMOTE,
     REPORT_THRESHOLD,
     SAMPLING_EXPONENT,
-    UPVOTE_EMOTE,
 )
 
 from . import POOL
@@ -153,6 +152,34 @@ def export_live_links_csv(
     return LinkExport(paths=paths, row_count=row_count)
 
 
+@dataclass(frozen=True)
+class DeadLinkCheckCandidate:
+    url: str
+    role_labels: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class DisambiguationRole:
+    role_id: str
+    label: str
+
+
+@dataclass(frozen=True)
+class DisambiguationCandidate:
+    url: str
+    roles: tuple[DisambiguationRole, ...]
+
+
+@dataclass(frozen=True)
+class ContentVoteScore:
+    upvotes: int
+    downvotes: int
+
+    @property
+    def value(self) -> int:
+        return self.upvotes - self.downvotes
+
+
 def get_closest_roles(query: str, min_age: str, count: int = 1) -> list[str] | None:
     """Get up to count closest role IDs to the query."""
     with POOL.connection() as conn:
@@ -227,9 +254,21 @@ def get_random_roles(count: int, min_age: str) -> list[str] | None:
 
 
 def get_latest_links_for_roles(
-    num_links: int, skip: int, min_age: str, role_ids: list[str] | None = None
+    num_links: int,
+    skip: int,
+    min_age: str,
+    role_ids: list[str] | None = None,
+    order: Literal["latest", "oldest", "top"] = "latest",
 ) -> list[tuple[str, str]] | None:
-    """Get the latest links for role ids, or all roles if role ids are none."""
+    """Get ordered links for role IDs, or all roles if role IDs are absent."""
+
+    order_by = {
+        "latest": "cl.uploaded_date DESC",
+        "oldest": "cl.uploaded_date ASC",
+        "top": "COALESCE(cl.initial_reaction_count, 0) + cl.num_upvotes - cl.num_downvotes DESC, cl.uploaded_date DESC",
+    }.get(order)
+    if order_by is None:
+        raise ValueError(f"Unsupported content order: {order}")
 
     with POOL.connection() as conn:
         with conn.cursor() as cur:
@@ -247,7 +286,7 @@ def get_latest_links_for_roles(
                     WHERE NOT cl.is_dead
                     AND cl.num_reports < %s
                     AND cl.uploaded_date > bday.birthday + %s::INTERVAL
-                    ORDER BY cl.uploaded_date DESC
+                    ORDER BY {order_by}
                     LIMIT %s OFFSET %s
                 )
                 SELECT role_id, url
@@ -260,7 +299,7 @@ def get_latest_links_for_roles(
                 role_filter = "WHERE role_id = ANY(%s)"
                 params.insert(0, role_ids)
 
-            query = base_query.format(role_filter=role_filter)
+            query = base_query.format(role_filter=role_filter, order_by=order_by)
             cur.execute(query, params)
             result = cur.fetchall()
 
@@ -268,7 +307,6 @@ def get_latest_links_for_roles(
                 return None
 
             return result
-
 
 def get_random_link_for_each_role(
     role_ids: list[str], min_age: str, *, use_recently_sent_queue: bool = True
@@ -294,7 +332,10 @@ def get_random_link_for_each_role(
                 numbered_urls AS (
                     SELECT bday.role_id, cl.url,
                     ROW_NUMBER() OVER (PARTITION BY bday.role_id ORDER BY
-                        RANDOM() * POWER(GREATEST(CAST(LEAST(initial_reaction_count / 3, %s) + num_upvotes AS FLOAT), 1.0), %s) DESC)
+                        RANDOM() * POWER(GREATEST(CAST(
+                            LEAST(initial_reaction_count / 3, %s) + num_upvotes - num_downvotes
+                            AS FLOAT
+                        ), 1.0), %s) DESC)
                         AS row_num
                     FROM bday
                     JOIN content_links cl ON bday.role_id = cl.role_id
@@ -346,29 +387,6 @@ def get_random_link_for_each_role(
             return result
 
 
-def update_given_emote_counts(role_id: str, url: str, count_by_emoji: dict[str, int]) -> None:
-    """Update the database for role and URL given the feedback from users."""
-
-    # Subtract 1 from each one to remove bot's react
-    upvote_count = count_by_emoji[UPVOTE_EMOTE] - 1
-    report_count = count_by_emoji[REPORT_EMOTE] - 1
-
-    if upvote_count + report_count > 0:
-        with POOL.connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    UPDATE content_links
-                    SET num_upvotes = num_upvotes + %s,
-                        num_reports = num_reports + %s
-                    WHERE url = %s
-                    AND role_id = %s;
-                    """,
-                    (upvote_count, report_count, url, role_id),
-                )
-        print(f"Updated feedback for {role_id} {url}: {(upvote_count, report_count)}")
-
-
 def mark_url_dead(url: str) -> int:
     """Mark every role using an unavailable URL as dead without changing user reports."""
 
@@ -385,3 +403,202 @@ def mark_url_dead(url: str) -> int:
                 (CONTENT_RECOVERY_MAX_GENERATION, url),
             )
             return cur.rowcount
+
+
+def add_content_report(role_id: str, url: str) -> int:
+    """Increment reports for the delivered role/link pairing."""
+
+    with POOL.connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE content_links
+                SET num_reports = num_reports + 1
+                WHERE role_id = %s
+                  AND url = %s;
+                """,
+                (role_id, url),
+            )
+            return cur.rowcount
+
+
+def get_content_vote_score(role_id: str, url: str) -> ContentVoteScore:
+    """Return the existing bot-vote totals for a delivered role/link pair."""
+
+    with POOL.connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT
+                    COALESCE(MAX(num_upvotes), 0),
+                    COALESCE(MAX(num_downvotes), 0)
+                FROM content_links
+                WHERE role_id = %s
+                  AND url = %s;
+                """,
+                (role_id, url),
+            )
+            row = cur.fetchone()
+            return ContentVoteScore(upvotes=int(row[0]), downvotes=int(row[1]))
+
+
+def add_content_vote(role_id: str, url: str, direction: str) -> ContentVoteScore:
+    """Add one bot vote and return the updated aggregate totals."""
+
+    if direction not in {"up", "down"}:
+        raise ValueError(f"Unsupported content vote direction: {direction}")
+
+    column = "num_upvotes" if direction == "up" else "num_downvotes"
+    with POOL.connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""
+                WITH updated AS (
+                    UPDATE content_links
+                    SET {column} = {column} + 1
+                    WHERE role_id = %s
+                      AND url = %s
+                    RETURNING num_upvotes, num_downvotes
+                )
+                SELECT
+                    COALESCE(MAX(num_upvotes), 0),
+                    COALESCE(MAX(num_downvotes), 0)
+                FROM updated;
+                """,
+                (role_id, url),
+            )
+            row = cur.fetchone()
+            return ContentVoteScore(upvotes=int(row[0]), downvotes=int(row[1]))
+
+
+def get_disambiguation_candidate(url: str | None = None) -> DisambiguationCandidate | None:
+    """Return one unresolved URL, or load a specified URL for an admin review."""
+
+    with POOL.connection() as conn:
+        with conn.cursor() as cur:
+            if url is None:
+                cur.execute(
+                    """
+                    SELECT url
+                    FROM content_links
+                    WHERE is_dead = FALSE
+                      AND disambiguated = FALSE
+                    GROUP BY url
+                    HAVING COUNT(DISTINCT role_id) BETWEEN 2 AND 25
+                    ORDER BY RANDOM()
+                    LIMIT 1;
+                    """
+                )
+            else:
+                cur.execute(
+                    """
+                    SELECT url
+                    FROM content_links
+                    WHERE url = %s
+                    GROUP BY url
+                    HAVING COUNT(DISTINCT role_id) BETWEEN 2 AND 25;
+                    """,
+                    (url,),
+                )
+            url_row = cur.fetchone()
+            if url_row is None:
+                return None
+
+            url = str(url_row[0])
+            cur.execute(
+                """
+                SELECT DISTINCT ON (cl.role_id)
+                    cl.role_id,
+                    CASE
+                        WHEN ri.member_name IS NOT NULL AND ri.group_name IS NOT NULL
+                            THEN ri.member_name || ' (' || ri.group_name || ')'
+                        ELSE COALESCE(ri.member_name, ri.group_name, cl.role_id)
+                    END AS role_label
+                FROM content_links cl
+                LEFT JOIN role_info ri ON ri.role_id = cl.role_id
+                WHERE cl.url = %s
+                ORDER BY cl.role_id, cl.uploaded_date DESC NULLS LAST;
+                """,
+                (url,),
+            )
+            roles = tuple(DisambiguationRole(role_id=str(row[0]), label=str(row[1])) for row in cur.fetchall())
+
+    return DisambiguationCandidate(url=url, roles=roles)
+
+
+def apply_disambiguation(url: str, selected_role_ids: tuple[str, ...]) -> int:
+    """Confirm a URL's selected roles and suppress every other role assignment."""
+
+    with POOL.connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE content_links
+                SET disambiguated = TRUE,
+                    num_reports = CASE
+                        WHEN role_id = ANY(%s::TEXT[]) THEN 0
+                        ELSE GREATEST(num_reports, %s)
+                    END
+                WHERE url = %s;
+                """,
+                (list(selected_role_ids), REPORT_THRESHOLD, url),
+            )
+            return cur.rowcount
+
+
+def get_live_urls_for_dead_link_check(after_url: str | None, limit: int) -> list[DeadLinkCheckCandidate]:
+    """Return the next distinct, eligible URLs with their role labels."""
+
+    with POOL.connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                WITH live_rows AS (
+                    SELECT
+                        cl.url,
+                        CASE
+                            WHEN ri.member_name IS NOT NULL AND ri.group_name IS NOT NULL
+                                THEN ri.member_name || ' (' || ri.group_name || ')'
+                            ELSE COALESCE(ri.member_name, ri.group_name, cl.role_id)
+                        END AS role_label
+                    FROM content_links cl
+                    LEFT JOIN role_info ri ON ri.role_id = cl.role_id
+                    WHERE cl.is_dead = FALSE
+                      AND cl.num_reports < %s
+                      AND (%s::TEXT IS NULL OR cl.url > %s)
+                )
+                SELECT url, array_agg(DISTINCT role_label ORDER BY role_label)
+                FROM live_rows
+                GROUP BY url
+                ORDER BY url ASC
+                LIMIT %s;
+                """,
+                (REPORT_THRESHOLD, after_url, after_url, limit),
+            )
+            return [DeadLinkCheckCandidate(url=row[0], role_labels=tuple(row[1])) for row in cur.fetchall()]
+
+
+def get_dead_link_check_cursor() -> str | None:
+    """Return the URL most recently completed by the dead-link checker."""
+
+    with POOL.connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT last_url FROM dead_link_check_state WHERE state_id = 1;")
+            row = cur.fetchone()
+            return row[0] if row else None
+
+
+def set_dead_link_check_cursor(url: str) -> None:
+    """Persist a completed dead-link check so the next process can resume."""
+
+    with POOL.connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO dead_link_check_state (state_id, last_url, updated_at)
+                VALUES (1, %s, NOW())
+                ON CONFLICT (state_id)
+                DO UPDATE SET last_url = EXCLUDED.last_url, updated_at = EXCLUDED.updated_at;
+                """,
+                (url,),
+            )

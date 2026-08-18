@@ -10,7 +10,8 @@ async def run_content_links_update() -> None:
 
     print("Starting content update...")
     last_message_id = await asyncio.to_thread(content_update_db.get_latest_message_id)
-    classifier = content_ingestion.ContentMessageClassifier()
+    known_role_ids = await asyncio.to_thread(content_update_db.get_known_role_ids)
+    classifier = content_ingestion.ContentMessageClassifier(fallback_role_ids=known_role_ids)
     context_messages = await asyncio.to_thread(content_discord.get_messages_around, last_message_id)
     recent_links: list[content_ingestion.ContentLinkDraft] = []
     for message in sorted(context_messages, key=lambda item: int(item["id"])):

@@ -9,6 +9,7 @@ from typing import Any, Literal
 SUPPORTED_VIDEO_EMBED_TYPES = frozenset({"gifv", "video"})
 ANIMATED_MEDIA_FLAG = 1 << 5
 URL_PATTERN = re.compile(r"https?://[^\s<>]+", re.IGNORECASE)
+ROLE_MENTION_PATTERN = re.compile(r"<@&(\d+)>")
 ROOT: Literal["root"] = "root"
 REPLY_CONTINUATION: Literal["reply_continuation"] = "reply_continuation"
 UNTHREADED_CONTINUATION: Literal["unthreaded_continuation"] = "unthreaded_continuation"
@@ -75,6 +76,17 @@ def role_mentions(message: dict[str, Any]) -> tuple[str, ...]:
     return tuple(dict.fromkeys(str(role_id) for role_id in roles if isinstance(role_id, (str, int))))
 
 
+def text_role_mentions(message: dict[str, Any], known_role_ids: frozenset[str]) -> tuple[str, ...]:
+    """Recover role mentions omitted from Discord's structured message payload."""
+
+    content = message.get("content", "")
+    if not isinstance(content, str):
+        return ()
+    return tuple(
+        dict.fromkeys(role_id for role_id in ROLE_MENTION_PATTERN.findall(content) if role_id in known_role_ids)
+    )
+
+
 def reaction_count(message: dict[str, Any]) -> int:
     total = 0
     for reaction in message.get("reactions", []):
@@ -107,11 +119,13 @@ class ContentMessageClassifier:
         self,
         continuation_window: timedelta = timedelta(minutes=2),
         context_cache_size: int = DEFAULT_CONTEXT_CACHE_SIZE,
+        fallback_role_ids: frozenset[str] = frozenset(),
     ):
         if context_cache_size < 1:
             raise ValueError("context_cache_size must be at least 1")
         self.continuation_window = continuation_window
         self.context_cache_size = context_cache_size
+        self.fallback_role_ids = fallback_role_ids
         self._active_by_author: dict[str, ContentContext] = {}
         self._context_by_message_id: OrderedDict[str, ContentContext] = OrderedDict()
 
@@ -153,7 +167,7 @@ class ContentMessageClassifier:
             return None
 
     def _context_from_root(self, message: dict[str, Any]) -> ContentContext | None:
-        roles = role_mentions(message)
+        roles = role_mentions(message) or text_role_mentions(message, self.fallback_role_ids)
         author_id = self._author_id(message)
         message_id = self._message_id(message)
         timestamp = self._timestamp(message)
@@ -215,7 +229,7 @@ class ContentMessageClassifier:
             return []
 
         urls = media_urls(message)
-        roles = role_mentions(message)
+        roles = role_mentions(message) or text_role_mentions(message, self.fallback_role_ids)
         if roles and urls:
             context = ContentContext(message_id, roles, author_id, timestamp)
             self._active_by_author[author_id] = context

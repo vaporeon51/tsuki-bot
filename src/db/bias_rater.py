@@ -1,4 +1,5 @@
 import datetime
+import math
 import random
 from dataclasses import dataclass
 from typing import Tuple
@@ -38,6 +39,42 @@ LEADERBOARD_SNAPSHOT_LIMIT = 45
 GLOBAL_ELO_K = 8
 GUILD_ELO_K = 24
 PERSONAL_ELO_K = 32
+FEED_ACTIVITY_POINTS = 1
+AUTOFEED_ACTIVITY_POINTS = 2
+CONTENT_UPVOTE_ACTIVITY_POINTS = 2
+CONTENT_DOWNVOTE_ACTIVITY_POINTS = -1
+
+
+def calculate_activity_adjustment(activity_score: int, match_count: int) -> int:
+    """Convert raw feed activity into a diminishing personal-ELO adjustment.
+
+    Raw activity is intentionally unbounded so feed-only users can develop a
+    useful ranking. Explicit head-to-head matches progressively reduce its
+    influence for the idol being judged.
+    """
+
+    if match_count < 0:
+        raise ValueError("match_count cannot be negative")
+    return round(16 * math.asinh(activity_score / 4) * 10 / (10 + match_count))
+
+
+def _effective_personal_elo_sql(alias: str = "u") -> str:
+    """SQL equivalent of ``personal_elo + calculate_activity_adjustment``."""
+
+    activity = f"COALESCE({alias}.activity_score, 0)"
+    matches = f"COALESCE({alias}.match_count, 0)"
+    # asinh(x) = sign(x) * ln(abs(x) + sqrt(x^2 + 1)). Writing it out keeps
+    # this compatible with PostgreSQL versions that do not expose ASINH.
+    return f"""
+        (COALESCE({alias}.personal_elo, 1200) + ROUND(
+            16.0 * SIGN({activity})
+            * LN(
+                ABS({activity}) / 4.0
+                + SQRT(POWER(ABS({activity}) / 4.0, 2) + 1)
+            )
+            * 10.0 / (10.0 + {matches})
+        ))::int
+    """
 
 
 @dataclass(frozen=True)
@@ -55,6 +92,7 @@ class Leaderboard:
     entries: list[LeaderboardEntry]
     vote_count: int
     movement_baseline_date: datetime.date | None = None
+    has_activity: bool = False
 
 
 @dataclass(frozen=True)
@@ -72,6 +110,29 @@ class GroupLeaderboard:
     entries: list[GroupLeaderboardEntry]
     vote_count: int
     top_n: int
+    has_activity: bool = False
+
+
+def add_personal_activity(user_id: int, role_ids: list[str], points: int) -> int:
+    """Add aggregate activity points, creating feed-only leaderboard rows."""
+
+    unique_role_ids = list(dict.fromkeys(role_ids))
+    if not unique_role_ids or points == 0:
+        return 0
+
+    with POOL.connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO user_elo (user_id, role_id, activity_score)
+                SELECT %s, requested.role_id, %s
+                FROM UNNEST(%s::VARCHAR[]) AS requested(role_id)
+                ON CONFLICT (user_id, role_id) DO UPDATE
+                SET activity_score = user_elo.activity_score + EXCLUDED.activity_score;
+                """,
+                (user_id, points, unique_role_ids),
+            )
+            return cur.rowcount
 
 
 def calculate_elo_delta(winner_elo: int, loser_elo: int, k: int = 32) -> Tuple[int, int]:
@@ -92,6 +153,7 @@ def get_matchup(user_id: int) -> list[tuple[str, str, str, int, str]] | None:
     """
     with POOL.connection() as conn:
         with conn.cursor() as cur:
+            effective_elo = _effective_personal_elo_sql("u")
             # 1. Pick the first idol via rank-weighted sampling (Efraimidis-Spirakis /
             # Gumbel-trick) on personal ELO. weight ∝ 1/rank^α so the user's higher-ELO
             # idols surface more often; everyone still has some chance. Scale-invariant
@@ -100,10 +162,10 @@ def get_matchup(user_id: int) -> list[tuple[str, str, str, int, str]] | None:
                 f"""
                 WITH ranked AS (
                     SELECT r.role_id, r.member_name, r.group_name,
-                           COALESCE(u.personal_elo, 1200) AS elo,
+                           {effective_elo} AS elo,
                            r.image_url,
                            ROW_NUMBER() OVER (
-                               ORDER BY COALESCE(u.personal_elo, 1200) DESC, r.role_id
+                               ORDER BY {effective_elo} DESC, r.role_id
                            ) AS rnk
                     FROM role_info r
                     LEFT JOIN user_elo u ON r.role_id = u.role_id AND u.user_id = %s
@@ -130,12 +192,12 @@ def get_matchup(user_id: int) -> list[tuple[str, str, str, int, str]] | None:
             # it decays less steeply to ensure enough random variety amongst opponents.
             cur.execute(
                 f"""
-                SELECT r.role_id, r.member_name, r.group_name, COALESCE(u.personal_elo, 1200), r.image_url
+                SELECT r.role_id, r.member_name, r.group_name, {effective_elo}, r.image_url
                 FROM role_info r
                 LEFT JOIN user_elo u ON r.role_id = u.role_id AND u.user_id = %s
                 WHERE r.role_id != %s
                   AND {_ACTIVE_IDOL_PREDICATE}
-                ORDER BY -ln(GREATEST(RANDOM(), 1e-10)) * EXP(GREATEST(ABS(COALESCE(u.personal_elo, 1200) - %s) - 50, 0::numeric) / 100.0) ASC
+                ORDER BY -ln(GREATEST(RANDOM(), 1e-10)) * EXP(GREATEST(ABS({effective_elo} - %s) - 50, 0::numeric) / 100.0) ASC
                 LIMIT 1;
                 """,
                 (user_id, role_id_a, personal_elo_a),
@@ -305,7 +367,7 @@ def record_vote(user_id: int, guild_id: int, winner_id: str, loser_id: str) -> t
             return gw_delta, gl_delta, sw_delta, sl_delta, pw_delta, pl_delta
 
 
-def _build_leaderboard(rows, vote_count) -> Leaderboard:
+def _build_leaderboard(rows, vote_count, has_activity: bool = False) -> Leaderboard:
     movement_baseline_date = next((row[6] for row in rows if len(row) > 6), None)
     return Leaderboard(
         entries=[
@@ -321,10 +383,11 @@ def _build_leaderboard(rows, vote_count) -> Leaderboard:
         ],
         vote_count=int(vote_count or 0),
         movement_baseline_date=movement_baseline_date,
+        has_activity=has_activity,
     )
 
 
-def _build_group_leaderboard(rows, vote_count, top_n: int) -> GroupLeaderboard:
+def _build_group_leaderboard(rows, vote_count, top_n: int, has_activity: bool = False) -> GroupLeaderboard:
     return GroupLeaderboard(
         entries=[
             GroupLeaderboardEntry(
@@ -339,6 +402,7 @@ def _build_group_leaderboard(rows, vote_count, top_n: int) -> GroupLeaderboard:
         ],
         vote_count=int(vote_count or 0),
         top_n=top_n,
+        has_activity=has_activity,
     )
 
 
@@ -540,18 +604,20 @@ def get_guild_group_leaderboard(guild_id: int, limit: int = 15, top_n: int = 3) 
 
 
 def get_personal_leaderboard(user_id: int, limit: int = 15) -> Leaderboard:
-    """Returns top idols by personal ELO for a user plus the personal vote count."""
+    """Return a personal board blending explicit ELO with feed activity."""
     with POOL.connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT COALESCE(SUM(match_count), 0) / 2 AS vote_count
+                SELECT COALESCE(SUM(match_count), 0) / 2 AS vote_count,
+                       COALESCE(BOOL_OR(activity_score != 0), FALSE) AS has_activity
                 FROM user_elo
                 WHERE user_id = %s;
                 """,
                 (user_id,),
             )
-            vote_count = cur.fetchone()[0]
+            vote_count, has_activity = cur.fetchone()
+            effective_elo = _effective_personal_elo_sql("u")
 
             cur.execute(
                 f"""
@@ -574,7 +640,7 @@ def get_personal_leaderboard(user_id: int, limit: int = 15) -> Leaderboard:
                 SELECT r.role_id,
                        r.member_name,
                        r.group_name,
-                       u.personal_elo,
+                       {effective_elo} AS effective_elo,
                        r.image_url,
                        p.rank AS previous_rank,
                        ps.snapshot_date AS movement_baseline_date
@@ -583,27 +649,29 @@ def get_personal_leaderboard(user_id: int, limit: int = 15) -> Leaderboard:
                 CROSS JOIN previous_snapshot ps
                 LEFT JOIN previous_ranks p ON r.role_id = p.role_id
                 WHERE u.user_id = %s AND {_ACTIVE_IDOL_PREDICATE}
-                ORDER BY u.personal_elo DESC, r.member_name, r.role_id
+                ORDER BY effective_elo DESC, r.member_name, r.role_id
                 LIMIT %s;
                 """,
                 (user_id, user_id, user_id, limit),
             )
-            return _build_leaderboard(cur.fetchall(), vote_count)
+            return _build_leaderboard(cur.fetchall(), vote_count, has_activity)
 
 
 def get_personal_group_leaderboard(user_id: int, limit: int = 15, top_n: int = 3) -> GroupLeaderboard:
-    """Returns top groups by average personal ELO of their top N voted active members."""
+    """Return groups using the same effective scores as the personal idol board."""
     with POOL.connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT COALESCE(SUM(match_count), 0) / 2 AS vote_count
+                SELECT COALESCE(SUM(match_count), 0) / 2 AS vote_count,
+                       COALESCE(BOOL_OR(activity_score != 0), FALSE) AS has_activity
                 FROM user_elo
                 WHERE user_id = %s;
                 """,
                 (user_id,),
             )
-            vote_count = cur.fetchone()[0]
+            vote_count, has_activity = cur.fetchone()
+            effective_elo = _effective_personal_elo_sql("u")
 
             cur.execute(
                 f"""
@@ -611,11 +679,11 @@ def get_personal_group_leaderboard(user_id: int, limit: int = 15, top_n: int = 3
                     SELECT r.group_name,
                            r.member_name,
                            r.image_url,
-                           u.personal_elo AS elo,
+                           {effective_elo} AS elo,
                            COUNT(*) OVER (PARTITION BY r.group_name) AS member_count,
                            ROW_NUMBER() OVER (
                                PARTITION BY r.group_name
-                               ORDER BY u.personal_elo DESC, r.member_name
+                               ORDER BY {effective_elo} DESC, r.member_name
                            ) AS member_rank
                     FROM user_elo u
                     JOIN role_info r ON u.role_id = r.role_id
@@ -638,7 +706,7 @@ def get_personal_group_leaderboard(user_id: int, limit: int = 15, top_n: int = 3
                 """,
                 (user_id, top_n, limit),
             )
-            return _build_group_leaderboard(cur.fetchall(), vote_count, top_n)
+            return _build_group_leaderboard(cur.fetchall(), vote_count, top_n, has_activity)
 
 
 # ---------------------------------------------------------------------------
@@ -652,12 +720,11 @@ def get_daily_idols(
 ) -> list[tuple[str, str, str, int, str]]:
     """Set of 8 active idols for a given KST date (default: today).
 
-    When deterministic=True (default), the sample is seeded by the date's
-    ordinal so every user who runs /bias daily on the same KST day sees the
-    same 8 idols in the same bracket order. When deterministic=False, the
-    sample is freshly random per call — different users will see different
-    brackets even on the same day. Returns an empty list if fewer than 8
-    active idols exist.
+    When deterministic=True, the sample is seeded by the date's ordinal so
+    every user who runs /bias daily on the same KST day sees the same 8 idols
+    in the same bracket order. By default deterministic=False, so the sample
+    is freshly random per call and different users see different brackets on
+    the same day. Returns an empty list if fewer than 8 active idols exist.
     """
     if date is None:
         date = _today_kst()
@@ -886,13 +953,14 @@ def _fetch_guild_snapshot_rows(cur, guild_id: int, limit: int) -> list[tuple[str
 
 
 def _fetch_personal_snapshot_rows(cur, user_id: int, limit: int) -> list[tuple[str, int, int, int]]:
+    effective_elo = _effective_personal_elo_sql("u")
     cur.execute(
         f"""
         WITH ranked AS (
             SELECT r.role_id,
-                   u.personal_elo AS elo,
+                   {effective_elo} AS elo,
                    ROW_NUMBER() OVER (
-                       ORDER BY u.personal_elo DESC, r.member_name, r.role_id
+                       ORDER BY {effective_elo} DESC, r.member_name, r.role_id
                    ) AS rank,
                    (
                        SELECT (COALESCE(SUM(match_count), 0) / 2)::int

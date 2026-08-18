@@ -29,11 +29,15 @@ class LRUCache:
 
 
 def is_message_broken_link(message: Message | Mapping[str, Any]) -> bool:
-    """Determines if the message is a broken imgur link."""
+    """Return whether Discord has produced an embed that shows an Imgur link is broken.
+
+    An empty embed list means Discord has not unfurled the URL yet, not that the
+    URL is dead.
+    """
 
     embeds = message.get("embeds", []) if isinstance(message, Mapping) else message.embeds
     if not embeds:
-        return True
+        return False
 
     first_embed = embeds[0]
     embed_type = first_embed.get("type") if isinstance(first_embed, Mapping) else first_embed.type
