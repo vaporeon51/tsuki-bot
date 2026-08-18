@@ -32,7 +32,7 @@ VOTE_VIEW_TIMEOUT_SECONDS = 60.0
 VOTE_RESULT_DISPLAY_SECONDS = 1.25
 BIAS_LEFT_EMOJI = "<:left:1539093624581783552>"
 BIAS_RIGHT_EMOJI = "<:right:1539093625445552182>"
-BIAS_SKIP_EMOJI = "<:skip:1539093623759577119>"
+BIAS_SKIP_EMOJI = "<:12985skip:1539100111995408467>"
 BIAS_END_EMOJI = "<:pinkcheck:1539093627949551627>"
 BIAS_DAILY_EMOJI = "<:shootingstars:1539098282138140752>"
 BIAS_TROPHY_EMOJI = "<:Trophy:1539093622182645761>"
@@ -642,11 +642,11 @@ class VoteView(discord.ui.View):
         next_view.interaction = interaction
         await interaction.edit_original_response(embeds=next_view.embeds, view=next_view)
 
-    @discord.ui.button(label="Left", emoji=BIAS_LEFT_EMOJI, style=discord.ButtonStyle.primary)
+    @discord.ui.button(label="Left", style=discord.ButtonStyle.primary)
     async def left_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self.process_vote(interaction, 0)
 
-    @discord.ui.button(label="Right", emoji=BIAS_RIGHT_EMOJI, style=discord.ButtonStyle.primary)
+    @discord.ui.button(label="Right", style=discord.ButtonStyle.primary)
     async def right_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self.process_vote(interaction, 1)
 
