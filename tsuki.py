@@ -874,7 +874,7 @@ class BiasRater(discord.app_commands.Group):
 
     @discord.app_commands.command(
         name="daily",
-        description="Today's 8-idol bracket challenge (same set for everyone, once per day)",
+        description="Today's 8-idol bracket challenge",
     )
     async def daily(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True, thinking=True)
