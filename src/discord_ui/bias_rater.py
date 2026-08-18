@@ -30,6 +30,12 @@ LEADERBOARD_MAX_PAGES = 3
 LEADERBOARD_MAX_ENTRIES = LEADERBOARD_PAGE_SIZE * LEADERBOARD_MAX_PAGES
 VOTE_VIEW_TIMEOUT_SECONDS = 60.0
 VOTE_RESULT_DISPLAY_SECONDS = 1.25
+BIAS_LEFT_EMOJI = "<:left:1539093624581783552>"
+BIAS_RIGHT_EMOJI = "<:right:1539093625445552182>"
+BIAS_SKIP_EMOJI = "<:skip:1539093623759577119>"
+BIAS_END_EMOJI = "<:pinkcheck:1539093627949551627>"
+BIAS_DAILY_EMOJI = "<:bluestarshiny:1539093626573946930>"
+BIAS_TROPHY_EMOJI = "<:Trophy:1539093622182645761>"
 
 
 async def _add_stat_count_safely(stat: str) -> None:
@@ -127,8 +133,8 @@ def build_round_embeds(left_idol, right_idol, round_num: int) -> list[discord.Em
     header = discord.Embed(
         title=f"Head to Head (Round {round_num})",
         description=(
-            f"⬅️ **{left_idol[1]}** ({left_idol[2]})\n"
-            f"➡️ **{right_idol[1]}** ({right_idol[2]})\n\n"
+            f"{BIAS_LEFT_EMOJI} **{left_idol[1]}** ({left_idol[2]})\n"
+            f"{BIAS_RIGHT_EMOJI} **{right_idol[1]}** ({right_idol[2]})\n\n"
             "Vote for your bias!"
         ),
         color=discord.Color(HANNI_LILAC),
@@ -148,10 +154,10 @@ def build_daily_round_embeds(left_idol, right_idol, bracket: BracketState) -> li
     stage = bracket.round_label()
     match_num = bracket.total_matches_played + 1
     header = discord.Embed(
-        title=f"🌟 Daily Bracket — {stage} ({match_num}/7)",
+        title=f"{BIAS_DAILY_EMOJI} Daily Bracket — {stage} ({match_num}/7)",
         description=(
-            f"⬅️ **{left_idol[1]}** ({left_idol[2]})\n"
-            f"➡️ **{right_idol[1]}** ({right_idol[2]})\n\n"
+            f"{BIAS_LEFT_EMOJI} **{left_idol[1]}** ({left_idol[2]})\n"
+            f"{BIAS_RIGHT_EMOJI} **{right_idol[1]}** ({right_idol[2]})\n\n"
             "Vote for your bias!"
         ),
         color=discord.Color(HANNI_GOLD),
@@ -174,8 +180,8 @@ def build_daily_summary_embed(
     voter_icon_url: str | None = None,
 ) -> discord.Embed:
     embed = discord.Embed(
-        title="🌟 Daily Bias Bracket",
-        description=f"🏆 **{champion[1]}** ({champion[2]}) takes the crown!",
+        title=f"{BIAS_DAILY_EMOJI} Daily Bias Bracket",
+        description=f"{BIAS_TROPHY_EMOJI} **{champion[1]}** ({champion[2]}) takes the crown!",
         color=discord.Color(HANNI_GOLD),
     )
     if voter_name:
@@ -221,7 +227,7 @@ def build_leaderboard_embeds(
         lines.append(f"{prefix}  **{entry.member_name}** · {entry.group_name}{score_suffix}")
 
     header = discord.Embed(
-        title=f"🏆 {title}",
+        title=f"{BIAS_TROPHY_EMOJI} {title}",
         description="\n".join(lines) if lines else "No entries yet.",
         color=discord.Color(HANNI_GOLD),
         url=_EMBED_GROUP_URL,
@@ -328,7 +334,7 @@ def build_group_leaderboard_embeds(title: str, leaderboard: GroupLeaderboard) ->
         lines.append(f"{prefix}  **{entry.group_name}** — **{entry.elo}** · Top: {top_members}")
 
     header = discord.Embed(
-        title=f"🏆 {title}",
+        title=f"{BIAS_TROPHY_EMOJI} {title}",
         description="\n".join(lines) if lines else "No entries yet.",
         color=discord.Color(HANNI_GOLD),
         url=_EMBED_GROUP_URL,
@@ -636,15 +642,15 @@ class VoteView(discord.ui.View):
         next_view.interaction = interaction
         await interaction.edit_original_response(embeds=next_view.embeds, view=next_view)
 
-    @discord.ui.button(label="⬅️ Left", style=discord.ButtonStyle.primary)
+    @discord.ui.button(label="Left", emoji=BIAS_LEFT_EMOJI, style=discord.ButtonStyle.primary)
     async def left_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self.process_vote(interaction, 0)
 
-    @discord.ui.button(label="➡️ Right", style=discord.ButtonStyle.primary)
+    @discord.ui.button(label="Right", emoji=BIAS_RIGHT_EMOJI, style=discord.ButtonStyle.primary)
     async def right_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self.process_vote(interaction, 1)
 
-    @discord.ui.button(label="Skip", style=discord.ButtonStyle.secondary, emoji="⏭️")
+    @discord.ui.button(label="Skip", style=discord.ButtonStyle.secondary, emoji=BIAS_SKIP_EMOJI)
     async def skip_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         for item in self.children:
             item.disabled = True
@@ -652,7 +658,7 @@ class VoteView(discord.ui.View):
         self.stop()
         await self._advance(interaction)
 
-    @discord.ui.button(label="End", style=discord.ButtonStyle.secondary, emoji="🏁")
+    @discord.ui.button(label="End", style=discord.ButtonStyle.secondary, emoji=BIAS_END_EMOJI)
     async def end_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         for item in self.children:
             item.disabled = True

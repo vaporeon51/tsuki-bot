@@ -7,7 +7,6 @@ from src.db.utils import get_random_link_for_each_role
 
 BIRTHDAY_HEADER_START = "<:165691floralbirthdayribbon:1538519874127532142>"
 BIRTHDAY_HEADER_END = "<:483370birthdaycake:1538519874790359090>"
-BIRTHDAY_CHEER = "<a:gomacheerpeach:1538518023437287654>"
 
 
 def build_birthday_message(member_name: str, group_name: str) -> str:

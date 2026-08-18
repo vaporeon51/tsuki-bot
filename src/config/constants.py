@@ -1,6 +1,3 @@
-TSUKI_NOM = "🐰"
-TSUKI_HARAM_HUG = "💕"
-
 # Number of user reports to hide a role + link combination.
 REPORT_THRESHOLD = 5
 
