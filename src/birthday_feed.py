@@ -11,17 +11,8 @@ BIRTHDAY_CHEER = "<a:gomacheerpeach:1538518023437287654>"
 
 
 def build_birthday_message(member_name: str, group_name: str) -> str:
-    """A simple birthday heading followed by a small Hanni-style note."""
-
-    birthday_note = (
-        f"everyone give {group_name}'s {member_name} lots of love"
-        if group_name.strip()
-        else f"everyone give {member_name} lots of love"
-    )
-    return (
-        f"# {BIRTHDAY_HEADER_START} Happy Birthday, {member_name}! {BIRTHDAY_HEADER_END}\n"
-        f"it's {member_name}'s special day! {birthday_note} {BIRTHDAY_CHEER}"
-    )
+    """Build the compact birthday heading used by the birthday feed."""
+    return f"# {BIRTHDAY_HEADER_START} Happy Birthday, {member_name}! {BIRTHDAY_HEADER_END}"
 
 
 async def update_birthday_feeds(bot: commands.Bot) -> None:

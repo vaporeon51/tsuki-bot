@@ -333,7 +333,7 @@ async def on_ready():
             print("Could not get server info for:", server.name, str(e))
 
     if not IS_DEV:
-        # start_loop_once(update_content_loop)
+        start_loop_once(update_content_loop)
         start_loop_once(update_reddit_feeds_loop)
         start_loop_once(update_birthday_feeds_loop)
         start_loop_once(update_bias_leaderboard_snapshots_loop)
