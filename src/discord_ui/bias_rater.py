@@ -3,7 +3,13 @@ from dataclasses import dataclass, field
 
 import discord
 
-from src.hanni_ui import HANNI_BLUSH, HANNI_GOLD, HANNI_LILAC, HANNI_MINT
+from src.hanni_ui import (
+    HANNI_BLUSH,
+    HANNI_GOLD,
+    HANNI_LILAC,
+    HANNI_MINT,
+    transient_error_message,
+)
 
 from src.db.bias_rater import (
     GroupLeaderboard,
@@ -22,6 +28,16 @@ _EMBED_GROUP_URL = "https://github.com/vaporeon51/tsuki-bot"
 LEADERBOARD_PAGE_SIZE = 15
 LEADERBOARD_MAX_PAGES = 3
 LEADERBOARD_MAX_ENTRIES = LEADERBOARD_PAGE_SIZE * LEADERBOARD_MAX_PAGES
+VOTE_VIEW_TIMEOUT_SECONDS = 60.0
+VOTE_RESULT_DISPLAY_SECONDS = 1.25
+
+
+async def _add_stat_count_safely(stat: str) -> None:
+    """Keep non-critical analytics failures from interrupting voting UI."""
+    try:
+        await asyncio.to_thread(add_stat_count, stat)
+    except Exception as error:
+        print(f"Could not update {stat} stat: {error}")
 
 
 @dataclass
@@ -363,7 +379,9 @@ class VoteView(discord.ui.View):
         matchups_log: list[MatchupLog] | None = None,
         bracket: BracketState | None = None,
     ):
-        super().__init__(timeout=30.0)
+        # Give users enough time to compare images while limiting how long a
+        # stale set of controls remains visible in Discord clients.
+        super().__init__(timeout=VOTE_VIEW_TIMEOUT_SECONDS)
         self.user_id = user_id
         self.guild_id = guild_id
         self.current_round = current_round
@@ -428,18 +446,50 @@ class VoteView(discord.ui.View):
                         voter_name=self.interaction.user.display_name,
                         voter_icon_url=self.interaction.user.display_avatar.url,
                     )
-                    await self.interaction.channel.send(embed=summary_embed)
-                    content = "Session timed out! Summary posted."
+                    await self.interaction.edit_original_response(
+                        content="Session timed out — posting summary…",
+                        embeds=[],
+                        view=None,
+                    )
+                    try:
+                        await self.interaction.channel.send(embed=summary_embed)
+                    except discord.HTTPException:
+                        await self.interaction.edit_original_response(
+                            content="Session timed out. I couldn't post the summary here.",
+                            embeds=[],
+                            view=None,
+                        )
+                    else:
+                        await self.interaction.edit_original_response(
+                            content="Session timed out! Summary posted.",
+                            embeds=[],
+                            view=None,
+                        )
                 else:
-                    content = "Session timed out, likely discord issue! Start another session to continue!"
-
-                await self.interaction.edit_original_response(
-                    content=content,
-                    embeds=[],
-                    view=None,
-                )
+                    await self.interaction.edit_original_response(
+                        content="Session timed out. Start another session to continue!",
+                        embeds=[],
+                        view=None,
+                    )
             except Exception:
                 pass
+
+    async def on_error(
+        self,
+        interaction: discord.Interaction,
+        error: Exception,
+        item: discord.ui.Item,
+    ) -> None:
+        print(f"Bias vote interaction failed on {item}: {error}")
+        self.stop()
+        try:
+            await interaction.edit_original_response(
+                content=transient_error_message(),
+                embeds=[],
+                view=None,
+            )
+        except discord.HTTPException:
+            pass
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.user_id:
@@ -455,17 +505,21 @@ class VoteView(discord.ui.View):
                     pass
             return False
 
+        # interaction_check runs before every button callback.  Acknowledge
+        # here, rather than after callback dispatch, so even a busy event loop
+        # has the greatest possible chance to meet Discord's 3-second deadline.
         self._answered = True
-        return True
-
-    async def process_vote(self, interaction: discord.Interaction, winner_idx: int):
-        # Ack immediately so we don't trip Discord's 3s interaction deadline
-        # while record_vote's sync DB work is running in a worker thread.
         if not interaction.response.is_done():
             try:
                 await interaction.response.defer()
             except discord.errors.InteractionResponded:
                 pass
+        return True
+
+    async def process_vote(self, interaction: discord.Interaction, winner_idx: int):
+        # The interaction was acknowledged in interaction_check before this
+        # callback was dispatched, so DB work below cannot miss Discord's
+        # 3-second interaction deadline.
 
         # 0 = left, 1 = right
         selected = self.left_idol if winner_idx == 0 else self.right_idol
@@ -482,7 +536,6 @@ class VoteView(discord.ui.View):
         gw, gl, sw, sl, pw, pl = await asyncio.to_thread(
             record_vote, self.user_id, self.guild_id, selected[0], unselected[0]
         )
-        await asyncio.to_thread(add_stat_count, "bias_vote_cast")
         self.matchups_log.append(
             MatchupLog(
                 left_name=self.left_idol[1],
@@ -499,41 +552,77 @@ class VoteView(discord.ui.View):
         self.embeds = [build_result_embed(selected, unselected, pw, pl)]
         await interaction.edit_original_response(embeds=self.embeds, view=self)
 
-        await asyncio.sleep(1.5)
-        await self._advance(interaction)
+        if self.is_daily:
+            await asyncio.gather(
+                asyncio.sleep(VOTE_RESULT_DISPLAY_SECONDS),
+                _add_stat_count_safely("bias_vote_cast"),
+            )
+            next_view = None
+        else:
+            # Fetch the next matchup while the result embed is displayed, so
+            # its DB round-trip does not add to the visible transition time.
+            _, _, next_view = await asyncio.gather(
+                asyncio.sleep(VOTE_RESULT_DISPLAY_SECONDS),
+                _add_stat_count_safely("bias_vote_cast"),
+                VoteView.create(
+                    self.user_id,
+                    self.guild_id,
+                    self.current_round + 1,
+                    self.matchups_log,
+                ),
+            )
+        await self._advance(interaction, next_view)
 
-    async def _advance(self, interaction: discord.Interaction) -> None:
+    async def _advance(
+        self,
+        interaction: discord.Interaction,
+        next_view: "VoteView | None" = None,
+    ) -> None:
         """Hand off to the next round or emit the final summary.
         Assumes the interaction has already been deferred/ack'd."""
         if self.is_daily:
             await self._advance_daily(interaction)
             return
 
-        next_view = await VoteView.create(
-            self.user_id,
-            self.guild_id,
-            self.current_round + 1,
-            self.matchups_log,
-        )
+        if next_view is None:
+            next_view = await VoteView.create(
+                self.user_id,
+                self.guild_id,
+                self.current_round + 1,
+                self.matchups_log,
+            )
         next_view.interaction = interaction
         await interaction.edit_original_response(embeds=next_view.embeds, view=next_view)
 
     async def _advance_daily(self, interaction: discord.Interaction) -> None:
         if self.bracket.is_complete():
             await asyncio.to_thread(record_daily_completion, self.user_id)
-            await asyncio.to_thread(add_stat_count, "bias_daily_completed")
             summary = build_daily_summary_embed(
                 self.matchups_log,
                 self.bracket.champion(),
                 voter_name=interaction.user.display_name,
                 voter_icon_url=interaction.user.display_avatar.url,
             )
-            await interaction.channel.send(embed=summary)
             await interaction.edit_original_response(
-                content="Daily bracket complete! Summary posted.",
+                content="Daily bracket complete — posting summary…",
                 embeds=[],
                 view=None,
             )
+            try:
+                await interaction.channel.send(embed=summary)
+            except discord.HTTPException:
+                await interaction.edit_original_response(
+                    content="Daily bracket complete. I couldn't post the summary here.",
+                    embeds=[],
+                    view=None,
+                )
+            else:
+                await interaction.edit_original_response(
+                    content="Daily bracket complete! Summary posted.",
+                    embeds=[],
+                    view=None,
+                )
+            await _add_stat_count_safely("bias_daily_completed")
             return
 
         next_view = VoteView(
@@ -557,11 +646,6 @@ class VoteView(discord.ui.View):
 
     @discord.ui.button(label="Skip", style=discord.ButtonStyle.secondary, emoji="⏭️")
     async def skip_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not interaction.response.is_done():
-            try:
-                await interaction.response.defer()
-            except discord.errors.InteractionResponded:
-                pass
         for item in self.children:
             item.disabled = True
 
@@ -570,29 +654,42 @@ class VoteView(discord.ui.View):
 
     @discord.ui.button(label="End", style=discord.ButtonStyle.secondary, emoji="🏁")
     async def end_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not interaction.response.is_done():
-            try:
-                await interaction.response.defer()
-            except discord.errors.InteractionResponded:
-                pass
         for item in self.children:
             item.disabled = True
 
         self.stop()
 
+        # Tear down the interactive UI before posting to the channel.  A
+        # missing Send Messages permission or a slow channel request must not
+        # make the End control appear to have failed.
         if self.matchups_log:
             summary_embed = VoteSummaryEmbed(
                 self.matchups_log,
                 voter_name=interaction.user.display_name,
                 voter_icon_url=interaction.user.display_avatar.url,
             )
-            await interaction.channel.send(embed=summary_embed)
-            content = "Session ended! Summary posted."
+            await interaction.edit_original_response(
+                content="Session ended — posting summary…",
+                embeds=[],
+                view=None,
+            )
+            try:
+                await interaction.channel.send(embed=summary_embed)
+            except discord.HTTPException:
+                await interaction.edit_original_response(
+                    content="Session ended. I couldn't post the summary here.",
+                    embeds=[],
+                    view=None,
+                )
+            else:
+                await interaction.edit_original_response(
+                    content="Session ended — summary posted.",
+                    embeds=[],
+                    view=None,
+                )
         else:
-            content = "Session ended!"
-
-        await interaction.edit_original_response(
-            content=content,
-            embeds=[],
-            view=None,
-        )
+            await interaction.edit_original_response(
+                content="Session ended!",
+                embeds=[],
+                view=None,
+            )

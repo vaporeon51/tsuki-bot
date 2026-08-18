@@ -720,12 +720,11 @@ def get_daily_idols(
 ) -> list[tuple[str, str, str, int, str]]:
     """Set of 8 active idols for a given KST date (default: today).
 
-    When deterministic=True (default), the sample is seeded by the date's
-    ordinal so every user who runs /bias daily on the same KST day sees the
-    same 8 idols in the same bracket order. When deterministic=False, the
-    sample is freshly random per call — different users will see different
-    brackets even on the same day. Returns an empty list if fewer than 8
-    active idols exist.
+    When deterministic=True, the sample is seeded by the date's ordinal so
+    every user who runs /bias daily on the same KST day sees the same 8 idols
+    in the same bracket order. By default deterministic=False, so the sample
+    is freshly random per call and different users see different brackets on
+    the same day. Returns an empty list if fewer than 8 active idols exist.
     """
     if date is None:
         date = _today_kst()
