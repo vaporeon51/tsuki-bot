@@ -42,13 +42,10 @@ HANNI_MINT = 0x9FD8BE
 HANNI_ROSE = 0xE58F9E
 
 
-def feed_started_message(
-    label: str, sort_by: str, count: int, interval: int, *, idol_pool: str | None = None
-) -> str:
+def feed_started_message(label: str, sort_by: str, count: int, interval: int) -> str:
     sort_label = {"random": "random", "latest": "latest", "oldest": "oldest", "top": "top-rated"}[sort_by]
-    subject = f"{idol_pool} bias" if idol_pool else f"{label}"
     return (
-        f"starting a {sort_label} feed of `{subject}`! "
+        f"starting a {sort_label} feed of `{label}`! "
         f"{count} posts, one every {interval} seconds {HANNI_EMOJIS['eating / nom']}"
     )
 
